@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TG Firebase Scanner</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0a0a;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;padding:16px;min-height:100vh}
+  h1{font-size:1.3rem;color:#2AABEE;margin-bottom:2px}
+  .sub{font-size:0.72rem;color:#555;margin-bottom:18px}
+  .card{background:#161616;border:1px solid #252525;border-radius:10px;padding:14px;margin-bottom:14px}
+  label{font-size:0.72rem;color:#777;display:block;margin-bottom:5px}
+  input{width:100%;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:7px;color:#ddd;font-size:0.85rem;padding:9px 10px;margin-bottom:10px}
+  input:focus{outline:none;border-color:#2AABEE}
+  button{border:none;border-radius:7px;color:#fff;cursor:pointer;font-size:0.8rem;font-weight:600;padding:10px 18px;transition:opacity 0.15s;width:100%}
+  button:active{opacity:0.7}
+  .btn-tg{background:#2AABEE;margin-bottom:8px}
+  .btn-fire{background:#ff6b35;margin-bottom:8px}
+  .btn-sec{background:#252525;color:#aaa}
+  .hidden{display:none!important}
+
+  .step{padding:12px;background:#0d0d0d;border:1px solid #1e1e1e;border-radius:8px;margin-bottom:10px}
+  .step-num{font-size:0.62rem;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
+  .step-title{font-size:0.85rem;color:#ddd;font-weight:600}
+
+  .log-box{background:#0d0d0d;border:1px solid #1e1e1e;border-radius:8px;padding:10px;font-size:0.68rem;font-family:monospace;color:#22c55e;max-height:200px;overflow-y:auto;margin-bottom:10px;white-space:pre-wrap;word-break:break-all}
+  .log-err{color:#ef4444}
+  .log-warn{color:#f59e0b}
+  .log-info{color:#818cf8}
+
+  .summary-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px}
+  .stat-box{background:#0d0d0d;border:1px solid #1e1e1e;border-radius:10px;padding:12px 10px;text-align:center}
+  .stat-box .num{font-size:1.8rem;font-weight:800;line-height:1}
+  .stat-box .lbl{font-size:0.6rem;color:#555;margin-top:4px;text-transform:uppercase;letter-spacing:0.6px}
+  .s-links .num{color:#2AABEE}
+  .s-live .num{color:#22c55e}
+  .s-devices .num{color:#f59e0b}
+  .s-active .num{color:#818cf8}
+
+  .item{background:#0d0d0d;border-radius:8px;padding:11px 12px;margin-bottom:7px;border-left:3px solid #252525}
+  .item.live{border-left-color:#22c55e}
+  .item.dead{border-left-color:#ef4444}
+  .item.error{border-left-color:#f59e0b}
+  .item-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px}
+  .item-url{font-size:0.68rem;color:#666;word-break:break-all;flex:1}
+  .badge{font-size:0.6rem;font-weight:700;padding:2px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:0.4px;white-space:nowrap}
+  .badge.live{background:#052e16;color:#22c55e}
+  .badge.dead{background:#450a0a;color:#ef4444}
+  .badge.error{background:#422006;color:#f59e0b}
+  .badge.scanning{background:#172554;color:#93c5fd}
+  .device-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px}
+  .pill{font-size:0.62rem;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap}
+  .pill-total{background:#1e1b4b;color:#818cf8}
+  .pill-active{background:#052e16;color:#22c55e}
+  .pill-idle{background:#1c1917;color:#78716c}
+  .item-src{font-size:0.6rem;color:#333;margin-top:3px;font-family:monospace}
+  .item-detail{font-size:0.65rem;color:#444;font-family:monospace}
+  .empty{text-align:center;color:#333;padding:30px 0;font-size:0.85rem}
+  .progress-wrap{height:3px;background:#1a1a1a;border-radius:2px;margin-bottom:10px;overflow:hidden}
+  .progress-bar{height:100%;background:#ff6b35;border-radius:2px;transition:width 0.2s}
+  .section-title{font-size:0.8rem;color:#888;margin-bottom:10px;font-weight:600}
+  .chat-tag{display:inline-block;background:#1a1a2e;color:#818cf8;font-size:0.58rem;padding:1px 6px;border-radius:10px;margin-right:3px}
+</style>
+</head>
+<body>
+
+<h1>🔥 TG Firebase Scanner</h1>
+<p class="sub">Login → Scan all chats → Find Firebase links → Check live status</p>
+
+<!-- STEP 1: LOGIN -->
+<div class="card" id="loginCard">
+  <div class="section-title">Step 1 — Telegram Login</div>
+  <div class="step">
+    <div class="step-num">Phone Number</div>
+    <input id="phone" type="tel" value="+919861992132" placeholder="+91...">
+    <button class="btn-tg" onclick="sendCode()">📱 Send OTP Code</button>
+  </div>
+
+  <div class="step hidden" id="otpStep">
+    <div class="step-num">OTP Code</div>
+    <input id="otp" type="number" placeholder="12345" maxlength="6">
+    <button class="btn-tg" onclick="signIn()">✅ Login</button>
+  </div>
+
+  <div class="step hidden" id="passStep">
+    <div class="step-num">2FA Password</div>
+    <input id="pass2fa" type="password" placeholder="Your 2FA password">
+    <button class="btn-tg" onclick="checkPass()">🔑 Verify Password</button>
+  </div>
+</div>
+
+<!-- LOG OUTPUT -->
+<div class="card">
+  <div class="section-title">Status</div>
+  <div class="log-box" id="logBox">waiting for login...\n</div>
+</div>
+
+<!-- STEP 2: SCAN CHATS (shown after login) -->
+<div class="card hidden" id="scanCard">
+  <div class="section-title">Step 2 — Scan Chats</div>
+  <label>Scan last N messages per chat</label>
+  <input id="msgLimit" type="number" value="1000" min="100" max="5000">
+  <button class="btn-fire" onclick="startScan()">🔍 Scan All Chats for Firebase Links</button>
+  <button class="btn-sec" id="stopBtn" onclick="stopScan()" style="display:none;margin-top:6px">■ Stop</button>
+</div>
+
+<!-- RESULTS -->
+<div class="card hidden" id="resultsCard">
+  <div class="section-title">Results</div>
+  <div class="summary-grid">
+    <div class="stat-box s-links">  <div class="num" id="cnt-links">0</div>   <div class="lbl">Links Found</div> </div>
+    <div class="stat-box s-live">   <div class="num" id="cnt-live">0</div>    <div class="lbl">Live DBs</div>    </div>
+    <div class="stat-box s-devices"><div class="num" id="cnt-devices">0</div> <div class="lbl">Total Devices</div></div>
+    <div class="stat-box s-active"> <div class="num" id="cnt-active">0</div>  <div class="lbl">Active Now</div>  </div>
+  </div>
+  <div class="progress-wrap"><div class="progress-bar" id="pBar" style="width:0%"></div></div>
+  <div id="fireResults"><div class="empty">Firebase links will appear here...</div></div>
+</div>
+
+<!-- Include GramJS via CDN -->
+<script src="https://unpkg.com/telegram/dist/telegram.js" onerror="loadFallback()"></script>
+<script>
+// ─── Telegram MTProto via GramJS ─────────────────────────────────────────────
+const API_ID   = 18550618;
+const API_HASH = 'e98b922550a95f725dfc30e13571589f';
+
+let client = null;
+let scanning = false;
+let phoneHash = '';
+
+const ACTIVE_BOOL = new Set(['online','isOnline','is_online','active','isActive','connected','isConnected','live','present','status']);
+const ACTIVE_TS   = ['lastSeen','last_seen','lastOnline','lastActive','last_active','updatedAt','updated_at','timestamp','ts','time','lastPing'];
+const ACTIVE_MS   = 10*60*1000;
+const PATHS       = ['devices','users','Devices','Users','device','user','online','connected','clients','tokens','panel','members','accounts','data','players','sessions','fcm'];
+
+// ─── Logging ─────────────────────────────────────────────────────────────────
+function log(msg, type=''){
+  const box = document.getElementById('logBox');
+  const cls = type==='err'?'log-err':type==='warn'?'log-warn':type==='info'?'log-info':'';
+  box.innerHTML += `<span class="${cls}">${esc(msg)}\n</span>`;
+  box.scrollTop = box.scrollHeight;
+}
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ─── CDN fallback ─────────────────────────────────────────────────────────────
+function loadFallback(){
+  log('Primary CDN failed — trying fallback...','warn');
+  const s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/telegram/dist/telegram.js';
+  s.onerror = ()=>{ log('Both CDNs failed. Using manual auth flow.','err'); showManualMode(); };
+  document.head.appendChild(s);
+}
+
+function showManualMode(){
+  log('⚠ MTProto library unavailable in browser. Use the downloadable Node.js version instead.','warn');
+  log('Switching to link-paste mode — paste firebase links manually.','info');
+  document.getElementById('loginCard').innerHTML = `
+    <div class="section-title">Manual Mode (MTProto lib unavailable)</div>
+    <label>Paste Firebase URLs here (one per line)</label>
+    <textarea id="manualUrls" rows="6" style="width:100%;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:7px;color:#ddd;font-size:0.78rem;padding:9px 10px;font-family:monospace;resize:vertical;margin-bottom:10px"></textarea>
+    <button class="btn-fire" onclick="manualScan()">🔥 Scan These Links</button>
+  `;
+  document.getElementById('loginCard').classList.remove('hidden');
+  document.getElementById('scanCard').classList.add('hidden');
+  document.getElementById('resultsCard').classList.remove('hidden');
+}
+
+async function manualScan(){
+  const urls = document.getElementById('manualUrls').value.split('\n').map(u=>u.trim()).filter(u=>u.includes('firebaseio.com'));
+  if(!urls.length){ alert('No firebase links found'); return; }
+  firebaseItems = urls.map(url=>({url,status:'pending',detail:'Queued',total:0,active:0,devPath:'',src:'manual'}));
+  updateFireStats();
+  renderFireResults();
+  await runFirebaseScan();
+}
+
+// ─── TG Auth ──────────────────────────────────────────────────────────────────
+async function initClient(){
+  if(!window.TelegramClient){ log('TelegramClient not loaded yet','err'); return false; }
+  const { TelegramClient } = window;
+  const { StringSession } = window.sessions || {};
+  // Try to init
+  try {
+    const session = new (window.gramjs?.sessions?.StringSession || window.StringSession)('');
+    client = new TelegramClient(session, API_ID, API_HASH, { connectionRetries:3 });
+    await client.connect();
+    return true;
+  } catch(e){
+    log('Init error: '+e.message,'err');
+    return false;
+  }
+}
+
+async function sendCode(){
+  log('Connecting to Telegram...','info');
+  const phone = document.getElementById('phone').value.trim();
+  if(!phone){ alert('Enter phone number'); return; }
+
+  // Check if GramJS loaded
+  let TG = window.TelegramClient || (window.gramjs && window.gramjs.TelegramClient);
+  if(!TG){
+    log('MTProto library still loading... trying again in 2s','warn');
+    setTimeout(sendCode, 2000);
+    return;
+  }
+
+  try {
+    let SS = window.StringSession || (window.gramjs && window.gramjs.sessions && window.gramjs.sessions.StringSession);
+    const session = new SS('');
+    client = new TG(session, API_ID, API_HASH, { connectionRetries:5, useWSS:true });
+    log('Connecting...','info');
+    await client.connect();
+    log('Connected! Sending OTP to '+phone,'info');
+
+    const result = await client.invoke(new (window.gramjs.tl.functions.auth.SendCode)({
+      phoneNumber: phone,
+      apiId: API_ID,
+      apiHash: API_HASH,
+      settings: new (window.gramjs.tl.types.CodeSettings)({})
+    }));
+    phoneHash = result.phoneCodeHash;
+    log('OTP sent! Check your Telegram app.','info');
+    document.getElementById('otpStep').classList.remove('hidden');
+  } catch(e){
+    log('Error: '+e.message,'err');
+    if(e.message.includes('AUTH_RESTART') || e.message.includes('connection')){
+      log('Try again — tap Send OTP','warn');
+    }
+  }
+}
+
+async function signIn(){
+  const phone = document.getElementById('phone').value.trim();
+  const code  = document.getElementById('otp').value.trim();
+  if(!code){ alert('Enter OTP'); return; }
+  try {
+    log('Verifying OTP...','info');
+    await client.invoke(new (window.gramjs.tl.functions.auth.SignIn)({
+      phoneNumber: phone,
+      phoneCodeHash: phoneHash,
+      phoneCode: code
+    }));
+    log('✅ Logged in successfully!','info');
+    onLoggedIn();
+  } catch(e){
+    if(e.message.includes('SESSION_PASSWORD_NEEDED')){
+      log('2FA required — enter password below','warn');
+      document.getElementById('passStep').classList.remove('hidden');
+    } else {
+      log('Sign-in error: '+e.message,'err');
+    }
+  }
+}
+
+async function checkPass(){
+  const pw = document.getElementById('pass2fa').value;
+  try {
+    log('Checking 2FA password...','info');
+    const pwInfo = await client.invoke(new (window.gramjs.tl.functions.account.GetPassword)());
+    const { computeCheck } = window.gramjs.Password || {};
+    const check = computeCheck ? await computeCheck(pwInfo, pw) : null;
+    if(!check){ log('2FA helper not available in browser build','err'); return; }
+    await client.invoke(new (window.gramjs.tl.functions.auth.CheckPassword)({ password: check }));
+    log('✅ 2FA verified!','info');
+    onLoggedIn();
+  } catch(e){
+    log('2FA error: '+e.message,'err');
+  }
+}
+
+function onLoggedIn(){
+  document.getElementById('loginCard').classList.add('hidden');
+  document.getElementById('scanCard').classList.remove('hidden');
+  document.getElementById('resultsCard').classList.remove('hidden');
+  log('Ready to scan your chats!','info');
+}
+
+// ─── Firebase scanner ─────────────────────────────────────────────────────────
+let firebaseItems = [];
+
+function extractFirebaseLinks(text){
+  const regex = /https?:\/\/[a-zA-Z0-9-]+(?:-default-rtdb)?\.firebaseio\.com\b[^\s"'<>]*/g;
+  const matches = text.match(regex) || [];
+  return matches.map(m => {
+    let u = m.replace(/[.,;)]+$/, '').replace(/\/+$/,'');
+    if(!u.startsWith('http')) u = 'https://'+u;
+    return u;
+  });
+}
+
+async function startScan(){
+  if(!client){ log('Not logged in','err'); return; }
+  scanning = true;
+  document.getElementById('stopBtn').style.display='block';
+  log('\n🔍 Scanning all Telegram chats for Firebase links...','info');
+
+  const limit = parseInt(document.getElementById('msgLimit').value) || 1000;
+  const found = new Map(); // url → set of chat names
+
+  try {
+    // Get all dialogs (chats/groups/channels)
+    const dialogs = await client.getDialogs({ limit: 500 });
+    log(`Found ${dialogs.length} chats/groups/channels`,'info');
+
+    let d = 0;
+    for(const dialog of dialogs){
+      if(!scanning) break;
+      d++;
+      const name = dialog.title || dialog.name || `Chat ${d}`;
+      log(`[${d}/${dialogs.length}] Scanning: ${name}`);
+
+      try {
+        const messages = await client.getMessages(dialog.entity, { limit });
+        for(const msg of messages){
+          const text = msg.message || msg.text || '';
+          for(const link of extractFirebaseLinks(text)){
+            if(!found.has(link)) found.set(link, new Set());
+            found.get(link).add(name);
+          }
+        }
+      } catch(e){
+        log(`  ⚠ Skip (${e.message.slice(0,40)})`, 'warn');
+      }
+    }
+  } catch(e){
+    log('Scan error: '+e.message,'err');
+  }
+
+  const urls = [...found.keys()];
+  log(`\n📊 Found ${urls.length} unique Firebase links!`,'info');
+  document.getElementById('cnt-links').textContent = urls.length;
+
+  if(urls.length === 0){
+    log('No firebase links found in your chats.','warn');
+    document.getElementById('stopBtn').style.display='none';
+    scanning = false;
+    return;
+  }
+
+  firebaseItems = urls.map(url => ({
+    url,
+    status: 'pending',
+    detail: 'Queued',
+    total: 0,
+    active: 0,
+    devPath: '',
+    src: [...found.get(url)].join(', ')
+  }));
+
+  renderFireResults();
+  log('\n🔥 Starting Firebase liveness checks...','info');
+  await runFirebaseScan();
+  document.getElementById('stopBtn').style.display='none';
+  scanning = false;
+}
+
+function stopScan(){
+  scanning = false;
+  log('Scan stopped.','warn');
+}
+
+async function runFirebaseScan(){
+  const total = firebaseItems.length;
+  let done = 0;
+  await Promise.all(firebaseItems.map(async item => {
+    await checkFirebaseOne(item);
+    done++;
+    document.getElementById('pBar').style.width = (done/total*100)+'%';
+    updateFireStats();
+    renderFireResults();
+  }));
+}
+
+async function getFetch(url, ms=6000){
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>ctrl.abort(), ms);
+  try {
+    const r = await fetch(url,{signal:ctrl.signal,cache:'no-store'});
+    clearTimeout(t);
+    return {status:r.status, text:await r.text()};
+  } catch(e){ clearTimeout(t); throw e; }
+}
+
+function countActive(data){
+  if(!data||typeof data!=='object') return 0;
+  let active=0;
+  const now=Date.now();
+  for(const dev of Object.values(data)){
+    if(!dev||typeof dev!=='object') continue;
+    let isActive=false;
+    for(const f of ACTIVE_BOOL){
+      if(f in dev){const v=dev[f];if(v===true||v===1||v==='true'||v==='online'||v==='active'||v==='connected'||v==='1'){isActive=true;break;}}
+    }
+    if(!isActive){
+      for(const f of ACTIVE_TS){
+        if(f in dev){let ts=dev[f];if(typeof ts==='number'){if(ts<1e10)ts*=1000;if(now-ts<ACTIVE_MS){isActive=true;break;}}}
+      }
+    }
+    if(isActive) active++;
+  }
+  return active;
+}
+
+async function scanDevicesFor(baseUrl){
+  let rootKeys=[];
+  try {
+    const r=await getFetch(baseUrl+'/.json?shallow=true',5000);
+    if(r.status===200&&r.text&&r.text!=='null'&&!r.text.includes('"error"')){
+      const p=JSON.parse(r.text);
+      if(p&&typeof p==='object') rootKeys=Object.keys(p);
+    }
+  } catch(e){}
+
+  const pathsToTry=[...new Set([...PATHS,...rootKeys])];
+  const shallowResults=await Promise.allSettled(
+    pathsToTry.map(path=>getFetch(baseUrl+'/'+path+'.json?shallow=true',5000).then(r=>({path,r})))
+  );
+
+  let bestPath='',bestKeys=[];
+  for(const res of shallowResults){
+    if(res.status!=='fulfilled') continue;
+    const {path,r}=res.value;
+    if(r.status!==200||!r.text||r.text==='null'||r.text.includes('"error"')) continue;
+    try{const p=JSON.parse(r.text);if(!p||typeof p!=='object') continue;const k=Object.keys(p);if(k.length>bestKeys.length){bestKeys=k;bestPath=path;}}catch(e){}
+  }
+
+  if(!bestPath||bestKeys.length===0) return {total:0,active:0};
+  const total=bestKeys.length;
+  let active=0;
+  try {
+    if(total<=500){
+      const r=await getFetch(baseUrl+'/'+bestPath+'.json',8000);
+      if(r.status===200&&r.text&&r.text!=='null'){const data=JSON.parse(r.text);active=countActive(data);}
+    } else {
+      const r=await getFetch(`${baseUrl}/${bestPath}.json?orderBy="$key"&limitToFirst=200`,8000);
+      if(r.status===200&&r.text&&r.text!=='null'){const data=JSON.parse(r.text);const sa=countActive(data);const st=Object.keys(data||{}).length;active=st>0?Math.round((sa/st)*total):0;}
+    }
+  } catch(e){}
+  return {total,active,path:bestPath};
+}
+
+async function checkFirebaseOne(item){
+  item.status='scanning'; item.detail='Connecting...';
+  try {
+    const r=await getFetch(item.url+'/.json?shallow=true');
+    if(r.status===200){
+      if(r.text.includes('"error"')){
+        const m=r.text.match(/"error"\s*:\s*"([^"]+)"/);
+        const msg=m?m[1]:'unknown';
+        if(/deactivat|disabl|retir/i.test(msg)){item.status='dead';item.detail=`Disabled: ${msg}`;}
+        else if(/permission/i.test(msg)){item.status='live';item.detail='Alive — rules deny read';}
+        else{item.status='error';item.detail=`Error: ${msg}`;}
+      } else if(r.text.trim()==='null'){
+        item.status='live';item.detail='Alive — DB empty';
+      } else {
+        item.status='live';item.detail='Alive — scanning devices...';
+        const s=await scanDevicesFor(item.url);
+        item.total=s.total;item.active=s.active;item.devPath=s.path||'';
+        item.detail=s.total>0?`Alive — /${s.path}`:'Alive — no readable devices';
+      }
+    } else if(r.status===401||r.status===403){
+      item.status='live';item.detail=`HTTP ${r.status} — Alive`;
+    } else if(r.status===404){
+      item.status='dead';item.detail='HTTP 404 — Deleted';
+    } else if(r.status===503){
+      item.status=r.text.includes('deactivat')?'dead':'error';
+      item.detail=r.text.includes('deactivat')?'Deactivated':'HTTP 503';
+    } else {
+      item.status='error';item.detail=`HTTP ${r.status}`;
+    }
+  } catch(e){
+    item.status=e.name==='AbortError'?'dead':'error';
+    item.detail=e.name==='AbortError'?'Timeout — likely dead':`Error: ${e.message}`;
+  }
+}
+
+function updateFireStats(){
+  const live=firebaseItems.filter(i=>i.status==='live').length;
+  const totalD=firebaseItems.reduce((s,i)=>s+(i.total||0),0);
+  const activeD=firebaseItems.reduce((s,i)=>s+(i.active||0),0);
+  document.getElementById('cnt-live').textContent=live;
+  document.getElementById('cnt-devices').textContent=totalD;
+  document.getElementById('cnt-active').textContent=activeD;
+}
+
+function renderFireResults(){
+  const container=document.getElementById('fireResults');
+  if(!firebaseItems.length){container.innerHTML='<div class="empty">No firebase links found yet...</div>';return;}
+  const order={scanning:0,live:1,error:2,dead:3,pending:4};
+  const sorted=[...firebaseItems].sort((a,b)=>(order[a.status]??4)-(order[b.status]??4));
+  container.innerHTML=sorted.map(item=>{
+    const name=item.url.replace('https://','').replace('-default-rtdb.firebaseio.com','');
+    const devRow=item.total>0?`<div class="device-row"><span class="pill pill-total">📱 ${item.total}</span><span class="pill pill-active">🟢 ${item.active} active</span><span class="pill pill-idle">⚫ ${item.total-item.active} idle</span></div>`:'';
+    const srcRow=item.src?`<div class="item-src">📨 ${esc(item.src.length>80?item.src.slice(0,80)+'...':item.src)}</div>`:'';
+    return `<div class="item ${item.status}"><div class="item-top"><span class="item-url">${esc(name)}</span><span class="badge ${item.status}">${item.status}</span></div><div class="item-detail">${esc(item.detail)}</div>${devRow}${srcRow}</div>`;
+  }).join('');
+}
+</script>
+</body>
+</html>
