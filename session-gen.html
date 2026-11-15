@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TG Session Generator</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;padding:20px;min-height:100vh}
+h1{color:#2AABEE;font-size:1.2rem;margin-bottom:4px}
+.sub{font-size:0.72rem;color:#555;margin-bottom:20px}
+.card{background:#111;border:1px solid #222;border-radius:12px;padding:16px;margin-bottom:14px}
+label{font-size:0.72rem;color:#555;display:block;margin-bottom:5px}
+input{width:100%;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:11px 13px;color:#e0e0e0;font-size:0.95rem;outline:none}
+input:focus{border-color:#2AABEE}
+button{width:100%;background:#2AABEE;color:#000;font-weight:700;font-size:1rem;padding:14px;border:none;border-radius:10px;cursor:pointer;margin-top:10px}
+button:disabled{background:#1a3a4a;color:#333;cursor:not-allowed}
+.log{background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:12px;font-family:monospace;font-size:0.72rem;min-height:80px;max-height:200px;overflow-y:auto;white-space:pre-wrap;color:#4ade80}
+.err{color:#f87171}
+.warn{color:#fbbf24}
+.session-box{background:#052e16;border:1px solid #166534;border-radius:10px;padding:14px;margin-top:14px;display:none}
+.session-box h3{color:#22c55e;font-size:0.85rem;margin-bottom:8px}
+.session-str{font-family:monospace;font-size:0.6rem;word-break:break-all;color:#86efac;background:#021a0d;padding:10px;border-radius:6px;margin-bottom:10px}
+.copy-btn{background:#166534;color:#22c55e;border:none;padding:10px 16px;border-radius:8px;font-weight:700;cursor:pointer;width:100%;font-size:0.85rem}
+.step{font-size:0.75rem;color:#555;margin-bottom:8px}
+.step span{color:#2AABEE}
+#otp-section{display:none}
+</style>
+</head>
+<body>
+
+<h1>🔑 TG Session Generator</h1>
+<p class="sub">Generates your session string — paste it in Railway/Koyeb once</p>
+
+<div class="card">
+  <p class="step">Step 1 — Enter your details and tap Send OTP</p>
+  <label>API ID</label>
+  <input id="api_id" value="18550618" readonly>
+  <label style="margin-top:10px">API Hash</label>
+  <input id="api_hash" value="e98b922550a95f725dfc30e13571589f" readonly>
+  <label style="margin-top:10px">Phone Number</label>
+  <input id="phone" value="+919861992132" type="tel">
+  <button id="btn-send" onclick="sendOTP()">📨 Send OTP to Telegram</button>
+</div>
+
+<div class="card" id="otp-section">
+  <p class="step">Step 2 — Check Telegram for the code, enter it below</p>
+  <label>OTP Code</label>
+  <input id="otp" placeholder="e.g. 12345" type="number" maxlength="5">
+  <label style="margin-top:10px">2FA Password (leave blank if none)</label>
+  <input id="password" type="password" placeholder="Leave empty if no 2FA">
+  <button id="btn-login" onclick="doLogin()">✅ Login & Get Session</button>
+</div>
+
+<div class="card">
+  <div class="log" id="log">Ready. Tap "Send OTP" to start...</div>
+</div>
+
+<div class="session-box" id="session-box">
+  <h3>✅ Session String — Copy this!</h3>
+  <div class="session-str" id="session-str"></div>
+  <button class="copy-btn" onclick="copySession()">📋 Copy Session String</button>
+  <p style="font-size:0.68rem;color:#555;margin-top:10px">
+    Paste this as <span style="color:#2AABEE">TG_SESSION</span> env var in Railway/Koyeb.<br>
+    Then change start command to <span style="color:#2AABEE">node index.js</span>
+  </p>
+</div>
+
+<script src="https://unpkg.com/telegram@2.26.21/dist/telegram.js"></script>
+<script>
+let client, phoneHash;
+
+function log(msg, type='') {
+  const el = document.getElementById('log');
+  const cls = type === 'err' ? 'err' : type === 'warn' ? 'warn' : '';
+  el.innerHTML += (cls ? `<span class="${cls}">${msg}</span>` : msg) + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+function getVal(id) { return document.getElementById(id).value.trim(); }
+
+async function waitForLib(ms=15000) {
+  const start = Date.now();
+  while (!window.telegram && Date.now()-start < ms) {
+    await new Promise(r=>setTimeout(r,300));
+  }
+  return !!window.telegram;
+}
+
+async function sendOTP() {
+  document.getElementById('btn-send').disabled = true;
+  log('Loading Telegram library...');
+
+  const loaded = await waitForLib(20000);
+  if (!loaded) {
+    log('❌ Library failed to load. Try refreshing on WiFi.', 'err');
+    document.getElementById('btn-send').disabled = false;
+    return;
+  }
+  log('✅ Library loaded.');
+
+  const { TelegramClient } = telegram;
+  const { StringSession } = telegram.sessions;
+
+  const apiId = parseInt(getVal('api_id'));
+  const apiHash = getVal('api_hash');
+  const phone = getVal('phone');
+
+  try {
+    client = new TelegramClient(new StringSession(''), apiId, apiHash, {
+      connectionRetries: 3,
+    });
+
+    log('Connecting to Telegram...');
+    await client.connect();
+    log('✅ Connected!');
+
+    log('Sending OTP to ' + phone + '...');
+    const result = await client.sendCode({ apiId, apiHash }, phone);
+    phoneHash = result.phoneCodeHash;
+    log('✅ OTP sent! Check your Telegram.');
+
+    document.getElementById('otp-section').style.display = 'block';
+    document.getElementById('btn-send').disabled = false;
+    document.getElementById('btn-send').textContent = '🔄 Resend OTP';
+  } catch(e) {
+    log('❌ Error: ' + e.message, 'err');
+    if (e.message.includes('wait')) {
+      const secs = e.message.match(/(\d+)/)?.[1] || '?';
+      log(`⏳ Flood limit: wait ${Math.ceil(secs/60)} minutes then try again.`, 'warn');
+    }
+    document.getElementById('btn-send').disabled = false;
+  }
+}
+
+async function doLogin() {
+  document.getElementById('btn-login').disabled = true;
+  const otp = getVal('otp');
+  const password = getVal('password');
+
+  if (!otp) {
+    log('❌ Enter the OTP code first', 'err');
+    document.getElementById('btn-login').disabled = false;
+    return;
+  }
+
+  try {
+    log('Signing in...');
+    const { TelegramClient } = telegram;
+
+    try {
+      await client.invoke(new telegram.tl.functions.auth.SignInRequest({
+        phoneNumber: getVal('phone'),
+        phoneCodeHash: phoneHash,
+        phoneCode: otp,
+      }));
+    } catch(e) {
+      if (e.errorMessage === 'SESSION_PASSWORD_NEEDED') {
+        if (!password) {
+          log('⚠️ 2FA required! Enter your password above.', 'warn');
+          document.getElementById('btn-login').disabled = false;
+          return;
+        }
+        log('2FA required, signing in with password...');
+        const { computeCheck } = telegram.Password;
+        const srpData = await client.invoke(new telegram.tl.functions.account.GetPasswordRequest());
+        const check = await computeCheck(srpData, password);
+        await client.invoke(new telegram.tl.functions.auth.CheckPasswordRequest({ password: check }));
+      } else {
+        throw e;
+      }
+    }
+
+    log('✅ Logged in!');
+    log('Saving session...');
+    const sessionStr = client.session.save();
+    log('✅ Session generated!');
+
+    document.getElementById('session-str').textContent = sessionStr;
+    document.getElementById('session-box').style.display = 'block';
+    document.getElementById('btn-login').disabled = false;
+
+    await client.disconnect();
+  } catch(e) {
+    log('❌ Error: ' + e.message, 'err');
+    if (e.message.includes('PHONE_CODE_INVALID')) log('Wrong OTP code — check Telegram and try again.', 'warn');
+    if (e.message.includes('PHONE_CODE_EXPIRED')) log('OTP expired — tap Resend OTP.', 'warn');
+    document.getElementById('btn-login').disabled = false;
+  }
+}
+
+function copySession() {
+  const str = document.getElementById('session-str').textContent;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(str).then(() => {
+      document.querySelector('.copy-btn').textContent = '✅ Copied!';
+      setTimeout(() => document.querySelector('.copy-btn').textContent = '📋 Copy Session String', 2000);
+    });
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = str;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    document.querySelector('.copy-btn').textContent = '✅ Copied!';
+    setTimeout(() => document.querySelector('.copy-btn').textContent = '📋 Copy Session String', 2000);
+  }
+}
+</script>
+</body></html>
