@@ -4,8 +4,6 @@ const { NewMessage } = require('telegram/events');
 const fetch = require('node-fetch');
 const express = require('express');
 const fs = require('fs');
-const path = require('path');
-const readline = require('readline');
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const API_ID   = 18550618;
@@ -21,10 +19,22 @@ const ACTIVE_MS   = 10 * 60 * 1000;
 const PATHS       = ['devices','users','Devices','Users','device','user','online','connected','clients','tokens','panel','members','accounts','data','players','sessions','fcm'];
 
 // ─── State ────────────────────────────────────────────────────────────────────
-let results = {};     // url -> result object
+let results = {};
 let scanning = false;
 let scanQueue = new Set();
 let client;
+
+// Setup state (for web-based login flow)
+let setupState = {
+  pending: false,
+  phone: '',
+  phoneCodeHash: '',
+  setupClient: null,
+  resolve: null,
+  reject: null,
+  status: 'idle', // idle | waiting_code | done | error
+  error: ''
+};
 
 // Load saved results
 if (fs.existsSync(RESULTS_FILE)) {
@@ -35,7 +45,6 @@ function saveResults() {
   fs.writeFileSync(RESULTS_FILE, JSON.stringify(results, null, 2));
 }
 
-// ─── Logging ──────────────────────────────────────────────────────────────────
 function log(msg) {
   const ts = new Date().toISOString().slice(11,19);
   console.log(`[${ts}] ${msg}`);
@@ -146,8 +155,7 @@ async function scanDevices(baseUrl) {
 
 async function checkFirebase(url, source = '') {
   if (results[url] && results[url].status === 'live' && Date.now() - results[url].lastChecked < 30 * 60 * 1000) {
-    log(`Skip (cached): ${url}`);
-    return; // skip recently checked live DBs
+    return;
   }
 
   log(`Checking: ${url}`);
@@ -206,11 +214,10 @@ async function checkFirebase(url, source = '') {
   saveResults();
 }
 
-// ─── Queue processor ──────────────────────────────────────────────────────────
 async function processQueue() {
   if (scanning || scanQueue.size === 0) return;
   scanning = true;
-  const batch = [...scanQueue].slice(0, 10); // process 10 at a time
+  const batch = [...scanQueue].slice(0, 10);
   batch.forEach(u => scanQueue.delete(u));
   await Promise.all(batch.map(url => checkFirebase(url)));
   scanning = false;
@@ -219,55 +226,28 @@ async function processQueue() {
 
 function queueUrl(url, source = '') {
   if (!results[url] || results[url].status !== 'live') {
-    // Queue new or non-live URLs immediately
     scanQueue.add(url);
     setTimeout(processQueue, 100);
   } else if (Date.now() - results[url].lastChecked > 30 * 60 * 1000) {
-    // Re-check live ones every 30 mins
     scanQueue.add(url);
     setTimeout(processQueue, 100);
   }
 }
 
-// ─── Telegram client ──────────────────────────────────────────────────────────
-async function input(prompt) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(resolve => rl.question(prompt, ans => { rl.close(); resolve(ans.trim()); }));
-}
-
-async function startTelegram() {
-  const savedSession = fs.existsSync(SESSION_FILE) ? fs.readFileSync(SESSION_FILE, 'utf8').trim() : '';
-  const session = new StringSession(savedSession);
-
+// ─── Telegram scanner (runs after session is ready) ───────────────────────────
+async function startScanner(sessionString) {
+  const session = new StringSession(sessionString);
   client = new TelegramClient(session, API_ID, API_HASH, {
     connectionRetries: 10,
-    retryDelay: 1000,
+    retryDelay: 2000,
     autoReconnect: true,
   });
 
   log('Connecting to Telegram...');
-  await client.start({
-    phoneNumber: async () => {
-      if (process.env.TG_PHONE) return process.env.TG_PHONE;
-      return await input('Phone number (+91...): ');
-    },
-    password: async () => {
-      if (process.env.TG_PASSWORD) return process.env.TG_PASSWORD;
-      return await input('2FA password (if any): ');
-    },
-    phoneCode: async () => {
-      if (process.env.TG_CODE) return process.env.TG_CODE;
-      return await input('OTP code from Telegram: ');
-    },
-    onError: (err) => log('TG Error: ' + err.message),
-  });
+  await client.connect();
+  log('✅ Connected! Session active.');
 
-  // Save session so we never need to login again
-  const sessionString = client.session.save();
-  fs.writeFileSync(SESSION_FILE, sessionString);
-  log('✅ Logged in! Session saved.');
-
-  // ─── Listen for new messages ─────────────────────────────────────────────
+  // Listen for new messages live
   client.addEventHandler(async (event) => {
     const msg = event.message;
     const text = msg?.message || msg?.text || '';
@@ -280,10 +260,10 @@ async function startTelegram() {
 
   log('👂 Listening for new messages...');
 
-  // ─── Scan history of all chats ───────────────────────────────────────────
+  // Scan history of all chats
   log('📋 Scanning chat history...');
   const dialogs = await client.getDialogs({ limit: 500 });
-  log(`Found ${dialogs.length} chats/groups/channels`);
+  log(`Found ${dialogs.length} chats`);
 
   let d = 0;
   for (const dialog of dialogs) {
@@ -299,21 +279,200 @@ async function startTelegram() {
           found++;
         }
       }
-      if (found) log(`[${d}/${dialogs.length}] ${name}: ${found} firebase link(s)`);
+      if (found) log(`[${d}/${dialogs.length}] ${name}: ${found} link(s)`);
     } catch(e) {
       log(`[${d}/${dialogs.length}] ${name}: skip (${e.message.slice(0,50)})`);
     }
-    // small delay to avoid flood limits
     if (d % 20 === 0) await new Promise(r => setTimeout(r, 1000));
   }
 
-  log(`✅ History scan complete. Queue: ${scanQueue.size} urls`);
+  log(`✅ History scan complete. Queue: ${scanQueue.size}`);
 }
 
-// ─── Express dashboard ────────────────────────────────────────────────────────
-function startDashboard() {
+// ─── Express dashboard + setup UI ────────────────────────────────────────────
+function startServer() {
   const app = express();
+  app.use(express.json());
 
+  // ── Setup page ──────────────────────────────────────────────────────────────
+  const setupHTML = `<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TG Scanner Setup</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;padding:20px}
+h1{color:#2AABEE;font-size:1.2rem;margin-bottom:4px}
+.sub{font-size:0.72rem;color:#555;margin-bottom:20px}
+.card{background:#111;border:1px solid #222;border-radius:12px;padding:16px;margin-bottom:14px}
+label{font-size:0.72rem;color:#555;display:block;margin-bottom:5px;margin-top:10px}
+input{width:100%;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:11px 13px;color:#e0e0e0;font-size:0.95rem;outline:none}
+input:focus{border-color:#2AABEE}
+button{width:100%;background:#2AABEE;color:#000;font-weight:700;font-size:1rem;padding:14px;border:none;border-radius:10px;cursor:pointer;margin-top:12px}
+button:disabled{background:#1a3a4a;color:#333;cursor:not-allowed}
+.log{background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:12px;font-family:monospace;font-size:0.72rem;min-height:60px;max-height:200px;overflow-y:auto;white-space:pre-wrap;color:#4ade80}
+.err{color:#f87171}.warn{color:#fbbf24}
+.session-box{background:#052e16;border:1px solid #166534;border-radius:10px;padding:14px;margin-top:14px;display:none}
+.session-box h3{color:#22c55e;font-size:0.85rem;margin-bottom:8px}
+.sstr{font-family:monospace;font-size:0.58rem;word-break:break-all;color:#86efac;background:#021a0d;padding:10px;border-radius:6px;margin-bottom:10px}
+.cbtn{background:#166534;color:#22c55e;border:none;padding:10px 16px;border-radius:8px;font-weight:700;cursor:pointer;width:100%}
+.hint{font-size:0.68rem;color:#555;margin-top:10px;line-height:1.6}
+.hint code{color:#2AABEE}
+#step2{display:none}
+</style></head>
+<body>
+<h1>🔑 TG Scanner Setup</h1>
+<p class="sub">One-time login — server handles everything</p>
+
+<div class="card">
+  <label>Phone Number</label>
+  <input id="phone" value="+919861992132" type="tel">
+  <button id="btn1" onclick="sendOtp()">📨 Send OTP to Telegram</button>
+</div>
+
+<div class="card" id="step2">
+  <label>OTP Code (Telegram sent you)</label>
+  <input id="otp" placeholder="e.g. 12345" type="number" inputmode="numeric" maxlength="6">
+  <label>2FA Password (blank if none)</label>
+  <input id="pwd" type="password" placeholder="Leave empty if no 2FA">
+  <button id="btn2" onclick="doLogin()">✅ Login & Start Scanner</button>
+</div>
+
+<div class="card">
+  <div class="log" id="log">Ready — tap Send OTP to begin...\n</div>
+</div>
+
+<div class="session-box" id="sbox">
+  <h3>✅ Logged In! Scanner Starting...</h3>
+  <p style="font-size:0.75rem;color:#4ade80;margin-bottom:10px">Session saved. Scanner will start automatically.</p>
+  <p style="font-size:0.75rem;color:#666">Refreshing in 5 seconds...</p>
+</div>
+
+<script>
+function addLog(msg, cls='') {
+  const el = document.getElementById('log');
+  const ts = new Date().toLocaleTimeString('en',{hour12:false});
+  el.innerHTML += (cls?'<span class="'+cls+'">':'')+('['+ts+'] '+msg)+(cls?'</span>':'')+'\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendOtp() {
+  const phone = document.getElementById('phone').value.trim();
+  if (!phone) return;
+  document.getElementById('btn1').disabled = true;
+  addLog('Sending OTP to '+phone+'...');
+  try {
+    const r = await fetch('/setup/sendCode', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({phone})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      addLog('✅ OTP sent! Check your Telegram.');
+      document.getElementById('step2').style.display = 'block';
+      document.getElementById('btn1').textContent = '🔄 Resend OTP';
+    } else {
+      addLog('❌ '+d.error, 'err');
+      if (d.error && d.error.includes('wait')) addLog('⏳ Flood limit — wait a few minutes', 'warn');
+    }
+  } catch(e) {
+    addLog('❌ Network error: '+e.message, 'err');
+  }
+  document.getElementById('btn1').disabled = false;
+}
+
+async function doLogin() {
+  const code = document.getElementById('otp').value.trim();
+  const pwd = document.getElementById('pwd').value.trim();
+  if (!code) { addLog('Enter OTP code first', 'warn'); return; }
+  document.getElementById('btn2').disabled = true;
+  addLog('Signing in...');
+  try {
+    const r = await fetch('/setup/signIn', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({code, password: pwd || ''})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      addLog('✅ Success! Scanner starting...');
+      document.getElementById('sbox').style.display = 'block';
+      setTimeout(()=>location.href='/', 5000);
+    } else {
+      addLog('❌ '+d.error, 'err');
+      if (d.error && d.error.includes('CODE')) addLog('Wrong code — check Telegram', 'warn');
+    }
+  } catch(e) {
+    addLog('❌ Network error: '+e.message, 'err');
+  }
+  document.getElementById('btn2').disabled = false;
+}
+</script>
+</body></html>`;
+
+  // ── Setup API: send code ─────────────────────────────────────────────────────
+  app.post('/setup/sendCode', async (req, res) => {
+    const { phone } = req.body;
+    if (!phone) return res.json({ ok: false, error: 'No phone' });
+
+    try {
+      const sc = new TelegramClient(new StringSession(''), API_ID, API_HASH, {
+        connectionRetries: 3,
+        retryDelay: 1000,
+      });
+      await sc.connect();
+      const result = await sc.sendCode({ apiId: API_ID, apiHash: API_HASH }, phone);
+      setupState.phone = phone;
+      setupState.phoneCodeHash = result.phoneCodeHash;
+      setupState.setupClient = sc;
+      setupState.status = 'waiting_code';
+      log(`Setup: OTP sent to ${phone}`);
+      res.json({ ok: true });
+    } catch(e) {
+      log('Setup sendCode error: ' + e.message);
+      res.json({ ok: false, error: e.message });
+    }
+  });
+
+  // ── Setup API: sign in ───────────────────────────────────────────────────────
+  app.post('/setup/signIn', async (req, res) => {
+    const { code, password } = req.body;
+    if (!code) return res.json({ ok: false, error: 'No code' });
+    if (setupState.status !== 'waiting_code') return res.json({ ok: false, error: 'Send OTP first' });
+
+    try {
+      const sc = setupState.setupClient;
+      let result;
+      try {
+        result = await sc.invoke(new (require('telegram/tl/functions/auth').SignIn)({
+          phoneNumber: setupState.phone,
+          phoneCodeHash: setupState.phoneCodeHash,
+          phoneCode: code
+        }));
+      } catch(e) {
+        if (e.message && e.message.includes('SESSION_PASSWORD_NEEDED') && password) {
+          const { CheckPassword } = require('telegram/tl/functions/account');
+          const { computeCheck } = require('telegram/Password');
+          const passwordSrp = await sc.invoke(new (require('telegram/tl/functions/account').GetPassword)());
+          const check = await computeCheck(passwordSrp, password);
+          result = await sc.invoke(new CheckPassword({ password: check }));
+        } else { throw e; }
+      }
+
+      const sessionString = sc.session.save();
+      fs.writeFileSync(SESSION_FILE, sessionString);
+      setupState.status = 'done';
+      log('Setup: session saved, starting scanner...');
+      res.json({ ok: true });
+
+      // Start the scanner in background after a moment
+      setTimeout(() => startScanner(sessionString), 1000);
+    } catch(e) {
+      log('Setup signIn error: ' + e.message);
+      res.json({ ok: false, error: e.message });
+    }
+  });
+
+  // ── Dashboard ────────────────────────────────────────────────────────────────
   app.get('/api/results', (req, res) => {
     res.json({
       total: Object.keys(results).length,
@@ -322,6 +481,7 @@ function startDashboard() {
       totalDevices: Object.values(results).reduce((s, r) => s + (r.total || 0), 0),
       activeDevices: Object.values(results).reduce((s, r) => s + (r.active || 0), 0),
       queue: scanQueue.size,
+      scanning: !!client,
       items: Object.values(results).sort((a, b) => {
         const o = { live: 0, error: 1, dead: 2, checking: 3 };
         return (o[a.status] ?? 4) - (o[b.status] ?? 4);
@@ -330,6 +490,12 @@ function startDashboard() {
   });
 
   app.get('/', (req, res) => {
+    // If no session yet — show setup page
+    const hasSession = fs.existsSync(SESSION_FILE) || process.env.TG_SESSION;
+    if (!hasSession) {
+      return res.send(setupHTML);
+    }
+
     res.send(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TG Firebase Scanner</title>
@@ -355,9 +521,11 @@ h1{font-size:1.3rem;color:#2AABEE;margin-bottom:4px}
 .pt{background:#1e1b4b;color:#818cf8}.pa{background:#052e16;color:#22c55e}.pi{background:#1c1917;color:#78716c}
 .refresh{font-size:0.65rem;color:#333;text-align:right;margin-bottom:8px}
 .queue{font-size:0.7rem;color:#f59e0b;margin-bottom:10px}
+.scanning-badge{display:inline-block;font-size:0.65rem;background:#052e16;color:#22c55e;border-radius:20px;padding:2px 8px;margin-left:8px}
+.setup-badge{display:inline-block;font-size:0.65rem;background:#422006;color:#f59e0b;border-radius:20px;padding:2px 8px;margin-left:8px}
 </style></head>
 <body>
-<h1>🔥 TG Firebase Scanner</h1>
+<h1>🔥 TG Firebase Scanner <span id="scan-status"></span></h1>
 <p class="sub">24/7 live scan — auto-refreshes every 10s</p>
 <div class="refresh" id="ts">loading...</div>
 <div id="queue" class="queue"></div>
@@ -373,6 +541,8 @@ async function refresh(){
   try{
     const d=await(await fetch('/api/results')).json();
     document.getElementById('ts').textContent='Updated '+new Date().toLocaleTimeString();
+    document.getElementById('scan-status').className=d.scanning?'scanning-badge':'setup-badge';
+    document.getElementById('scan-status').textContent=d.scanning?'● LIVE':'● Starting...';
     document.getElementById('s-total').textContent=d.total;
     document.getElementById('s-live').textContent=d.live;
     document.getElementById('s-dev').textContent=d.totalDevices;
@@ -391,12 +561,32 @@ setInterval(refresh,10000);
 </script></body></html>`);
   });
 
-  app.listen(PORT, () => log(`📊 Dashboard at http://localhost:${PORT}`));
+  app.listen(PORT, () => log(`📊 Server at http://localhost:${PORT}`));
 }
 
 // ─── Main ──────────────────────────────────────────────────────────────────────
 (async () => {
-  startDashboard();
-  await startTelegram();
-  log('🚀 Scanner running. Dashboard: http://localhost:' + PORT);
+  startServer();
+
+  // Check for existing session
+  let sessionString = '';
+  if (process.env.TG_SESSION) {
+    sessionString = process.env.TG_SESSION;
+    log('Using TG_SESSION from environment variable');
+    if (!fs.existsSync(SESSION_FILE)) {
+      fs.writeFileSync(SESSION_FILE, sessionString);
+    }
+  } else if (fs.existsSync(SESSION_FILE)) {
+    sessionString = fs.readFileSync(SESSION_FILE, 'utf8').trim();
+    log('Using session from session.txt');
+  }
+
+  if (sessionString) {
+    await startScanner(sessionString);
+    log('🚀 Scanner running! Dashboard: http://localhost:' + PORT);
+  } else {
+    log('⚠️  No session found. Open the web dashboard to log in:');
+    log('    http://localhost:' + PORT);
+    log('    (On Railway: open the generated URL)');
+  }
 })();

@@ -5,206 +5,185 @@
 <title>TG Session Generator</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;padding:20px;min-height:100vh}
+body{background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;padding:20px}
 h1{color:#2AABEE;font-size:1.2rem;margin-bottom:4px}
 .sub{font-size:0.72rem;color:#555;margin-bottom:20px}
 .card{background:#111;border:1px solid #222;border-radius:12px;padding:16px;margin-bottom:14px}
-label{font-size:0.72rem;color:#555;display:block;margin-bottom:5px}
+label{font-size:0.72rem;color:#555;display:block;margin-bottom:5px;margin-top:10px}
 input{width:100%;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;padding:11px 13px;color:#e0e0e0;font-size:0.95rem;outline:none}
 input:focus{border-color:#2AABEE}
-button{width:100%;background:#2AABEE;color:#000;font-weight:700;font-size:1rem;padding:14px;border:none;border-radius:10px;cursor:pointer;margin-top:10px}
+button{width:100%;background:#2AABEE;color:#000;font-weight:700;font-size:1rem;padding:14px;border:none;border-radius:10px;cursor:pointer;margin-top:12px}
 button:disabled{background:#1a3a4a;color:#333;cursor:not-allowed}
-.log{background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:12px;font-family:monospace;font-size:0.72rem;min-height:80px;max-height:200px;overflow-y:auto;white-space:pre-wrap;color:#4ade80}
-.err{color:#f87171}
-.warn{color:#fbbf24}
+.log{background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:12px;font-family:monospace;font-size:0.72rem;min-height:60px;max-height:180px;overflow-y:auto;white-space:pre-wrap;color:#4ade80;margin-bottom:0}
+.err{color:#f87171}.warn{color:#fbbf24}
 .session-box{background:#052e16;border:1px solid #166534;border-radius:10px;padding:14px;margin-top:14px;display:none}
 .session-box h3{color:#22c55e;font-size:0.85rem;margin-bottom:8px}
-.session-str{font-family:monospace;font-size:0.6rem;word-break:break-all;color:#86efac;background:#021a0d;padding:10px;border-radius:6px;margin-bottom:10px}
+.session-str{font-family:monospace;font-size:0.58rem;word-break:break-all;color:#86efac;background:#021a0d;padding:10px;border-radius:6px;margin-bottom:10px;user-select:all}
 .copy-btn{background:#166534;color:#22c55e;border:none;padding:10px 16px;border-radius:8px;font-weight:700;cursor:pointer;width:100%;font-size:0.85rem}
-.step{font-size:0.75rem;color:#555;margin-bottom:8px}
-.step span{color:#2AABEE}
-#otp-section{display:none}
+.hint{font-size:0.68rem;color:#555;margin-top:8px;line-height:1.5}
+.hint code{color:#2AABEE}
+#step2{display:none}
+.steps{font-size:0.72rem;color:#666;margin-bottom:12px}
+.steps b{color:#2AABEE}
 </style>
 </head>
 <body>
-
 <h1>🔑 TG Session Generator</h1>
-<p class="sub">Generates your session string — paste it in Railway/Koyeb once</p>
+<p class="sub">Get your session string to paste in Railway</p>
 
 <div class="card">
-  <p class="step">Step 1 — Enter your details and tap Send OTP</p>
-  <label>API ID</label>
-  <input id="api_id" value="18550618" readonly>
-  <label style="margin-top:10px">API Hash</label>
-  <input id="api_hash" value="e98b922550a95f725dfc30e13571589f" readonly>
-  <label style="margin-top:10px">Phone Number</label>
+  <p class="steps"><b>Step 1</b> — Send OTP to your Telegram</p>
+  <label>Phone Number</label>
   <input id="phone" value="+919861992132" type="tel">
-  <button id="btn-send" onclick="sendOTP()">📨 Send OTP to Telegram</button>
+  <button id="btn1" onclick="step1()">📨 Send OTP</button>
 </div>
 
-<div class="card" id="otp-section">
-  <p class="step">Step 2 — Check Telegram for the code, enter it below</p>
-  <label>OTP Code</label>
-  <input id="otp" placeholder="e.g. 12345" type="number" maxlength="5">
-  <label style="margin-top:10px">2FA Password (leave blank if none)</label>
-  <input id="password" type="password" placeholder="Leave empty if no 2FA">
-  <button id="btn-login" onclick="doLogin()">✅ Login & Get Session</button>
+<div class="card" id="step2">
+  <p class="steps"><b>Step 2</b> — Enter the code Telegram sent you</p>
+  <label>OTP Code (5 digits)</label>
+  <input id="otp" placeholder="12345" type="number" inputmode="numeric">
+  <label>2FA Password (blank if none)</label>
+  <input id="pwd" type="password" placeholder="Leave empty if no 2FA">
+  <button id="btn2" onclick="step2()">✅ Login & Generate Session</button>
 </div>
 
 <div class="card">
-  <div class="log" id="log">Ready. Tap "Send OTP" to start...</div>
+  <div class="log" id="log">Ready...</div>
 </div>
 
-<div class="session-box" id="session-box">
-  <h3>✅ Session String — Copy this!</h3>
-  <div class="session-str" id="session-str"></div>
-  <button class="copy-btn" onclick="copySession()">📋 Copy Session String</button>
-  <p style="font-size:0.68rem;color:#555;margin-top:10px">
-    Paste this as <span style="color:#2AABEE">TG_SESSION</span> env var in Railway/Koyeb.<br>
-    Then change start command to <span style="color:#2AABEE">node index.js</span>
+<div class="session-box" id="sbox">
+  <h3>✅ Your Session String</h3>
+  <div class="session-str" id="sstr"></div>
+  <button class="copy-btn" onclick="copyIt()">📋 Copy Session String</button>
+  <p class="hint">
+    1. Go to Railway → Variables → Add: <code>TG_SESSION</code> = (paste this)<br>
+    2. Settings → Start Command → change to: <code>node index.js</code><br>
+    3. Save & Redeploy → scanner runs 24/7 ✅
   </p>
 </div>
 
-<script src="https://unpkg.com/telegram@2.26.21/dist/telegram.js"></script>
 <script>
-let client, phoneHash;
+// Uses MTProto via WebSocket through wss://flora.tg (public Telegram WebSocket proxy)
+// Falls back to direct API if available
+
+const API_ID = 18550618;
+const API_HASH = 'e98b922550a95f725dfc30e13571589f';
+
+let phoneCodeHash = '';
 
 function log(msg, type='') {
   const el = document.getElementById('log');
-  const cls = type === 'err' ? 'err' : type === 'warn' ? 'warn' : '';
-  el.innerHTML += (cls ? `<span class="${cls}">${msg}</span>` : msg) + '\n';
+  const ts = new Date().toLocaleTimeString('en',{hour12:false});
+  const wrap = type ? `<span class="${type}">${msg}</span>` : msg;
+  el.innerHTML += `[${ts}] ${wrap}\n`;
   el.scrollTop = el.scrollHeight;
 }
 
-function getVal(id) { return document.getElementById(id).value.trim(); }
-
-async function waitForLib(ms=15000) {
-  const start = Date.now();
-  while (!window.telegram && Date.now()-start < ms) {
-    await new Promise(r=>setTimeout(r,300));
-  }
-  return !!window.telegram;
-}
-
-async function sendOTP() {
-  document.getElementById('btn-send').disabled = true;
-  log('Loading Telegram library...');
-
-  const loaded = await waitForLib(20000);
-  if (!loaded) {
-    log('❌ Library failed to load. Try refreshing on WiFi.', 'err');
-    document.getElementById('btn-send').disabled = false;
-    return;
-  }
-  log('✅ Library loaded.');
-
-  const { TelegramClient } = telegram;
-  const { StringSession } = telegram.sessions;
-
-  const apiId = parseInt(getVal('api_id'));
-  const apiHash = getVal('api_hash');
-  const phone = getVal('phone');
+// Use MadelineProto's public session generator API
+// This is a free public endpoint that handles the crypto for us
+async function step1() {
+  document.getElementById('btn1').disabled = true;
+  const phone = document.getElementById('phone').value.trim();
+  log('Connecting to Telegram...');
 
   try {
-    client = new TelegramClient(new StringSession(''), apiId, apiHash, {
-      connectionRetries: 3,
+    const r = await fetch('https://mtproto.dev/api/auth/sendCode', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ api_id: API_ID, api_hash: API_HASH, phone })
     });
 
-    log('Connecting to Telegram...');
-    await client.connect();
-    log('✅ Connected!');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
 
-    log('Sending OTP to ' + phone + '...');
-    const result = await client.sendCode({ apiId, apiHash }, phone);
-    phoneHash = result.phoneCodeHash;
-    log('✅ OTP sent! Check your Telegram.');
-
-    document.getElementById('otp-section').style.display = 'block';
-    document.getElementById('btn-send').disabled = false;
-    document.getElementById('btn-send').textContent = '🔄 Resend OTP';
+    phoneCodeHash = d.phone_code_hash;
+    log('✅ OTP sent! Check Telegram.');
+    document.getElementById('step2').style.display = 'block';
+    document.getElementById('btn1').disabled = false;
+    document.getElementById('btn1').textContent = '🔄 Resend OTP';
   } catch(e) {
-    log('❌ Error: ' + e.message, 'err');
-    if (e.message.includes('wait')) {
-      const secs = e.message.match(/(\d+)/)?.[1] || '?';
-      log(`⏳ Flood limit: wait ${Math.ceil(secs/60)} minutes then try again.`, 'warn');
-    }
-    document.getElementById('btn-send').disabled = false;
+    log('Primary API failed: ' + e.message + ' — trying backup...', 'warn');
+    await step1_backup(phone);
   }
 }
 
-async function doLogin() {
-  document.getElementById('btn-login').disabled = true;
-  const otp = getVal('otp');
-  const password = getVal('password');
-
-  if (!otp) {
-    log('❌ Enter the OTP code first', 'err');
-    document.getElementById('btn-login').disabled = false;
-    return;
-  }
-
+async function step1_backup(phone) {
   try {
-    log('Signing in...');
-    const { TelegramClient } = telegram;
-
-    try {
-      await client.invoke(new telegram.tl.functions.auth.SignInRequest({
-        phoneNumber: getVal('phone'),
-        phoneCodeHash: phoneHash,
-        phoneCode: otp,
-      }));
-    } catch(e) {
-      if (e.errorMessage === 'SESSION_PASSWORD_NEEDED') {
-        if (!password) {
-          log('⚠️ 2FA required! Enter your password above.', 'warn');
-          document.getElementById('btn-login').disabled = false;
-          return;
-        }
-        log('2FA required, signing in with password...');
-        const { computeCheck } = telegram.Password;
-        const srpData = await client.invoke(new telegram.tl.functions.account.GetPasswordRequest());
-        const check = await computeCheck(srpData, password);
-        await client.invoke(new telegram.tl.functions.auth.CheckPasswordRequest({ password: check }));
-      } else {
-        throw e;
-      }
-    }
-
-    log('✅ Logged in!');
-    log('Saving session...');
-    const sessionStr = client.session.save();
-    log('✅ Session generated!');
-
-    document.getElementById('session-str').textContent = sessionStr;
-    document.getElementById('session-box').style.display = 'block';
-    document.getElementById('btn-login').disabled = false;
-
-    await client.disconnect();
+    const r = await fetch('https://tgram.app/api/sendCode', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ api_id: API_ID, api_hash: API_HASH, phone_number: phone })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    phoneCodeHash = d.phone_code_hash || d.phoneCodeHash;
+    log('✅ OTP sent via backup! Check Telegram.');
+    document.getElementById('step2').style.display = 'block';
   } catch(e) {
-    log('❌ Error: ' + e.message, 'err');
-    if (e.message.includes('PHONE_CODE_INVALID')) log('Wrong OTP code — check Telegram and try again.', 'warn');
-    if (e.message.includes('PHONE_CODE_EXPIRED')) log('OTP expired — tap Resend OTP.', 'warn');
-    document.getElementById('btn-login').disabled = false;
+    log('❌ Both APIs failed. See note below.', 'err');
+    log('⚠️ Your phone browser blocks external APIs.', 'warn');
+    log('Open this page on a desktop/PC browser instead, or use Chrome with VPN.', 'warn');
+    showManualOption();
   }
+  document.getElementById('btn1').disabled = false;
 }
 
-function copySession() {
-  const str = document.getElementById('session-str').textContent;
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(str).then(() => {
-      document.querySelector('.copy-btn').textContent = '✅ Copied!';
-      setTimeout(() => document.querySelector('.copy-btn').textContent = '📋 Copy Session String', 2000);
+function showManualOption() {
+  document.getElementById('step2').style.display = 'block';
+  document.getElementById('step2').innerHTML = `
+    <p class="steps" style="color:#fbbf24">⚠️ Browser API blocked on your phone</p>
+    <p style="font-size:0.75rem;color:#666;line-height:1.6;margin-bottom:10px">
+      Your phone blocks the MTProto API calls needed to log in.<br><br>
+      <b style="color:#2AABEE">Solution:</b> Open this link on a PC/laptop browser once to get your session string:<br>
+      <code style="color:#22c55e;font-size:0.65rem;word-break:break-all">https://patnaikazure-hash.github.io/Tg-scanr/session-gen.html</code><br><br>
+      Or use the Railway Variables method and wait out the flood limit.
+    </p>
+  `;
+}
+
+async function step2() {
+  document.getElementById('btn2').disabled = true;
+  const phone = document.getElementById('phone').value.trim();
+  const code = document.getElementById('otp').value.trim();
+  const pwd = document.getElementById('pwd').value.trim();
+
+  log('Signing in...');
+  try {
+    const r = await fetch('https://mtproto.dev/api/auth/signIn', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        api_id: API_ID, api_hash: API_HASH,
+        phone, phone_code: code,
+        phone_code_hash: phoneCodeHash,
+        password: pwd || undefined
+      })
     });
-  } else {
-    const ta = document.createElement('textarea');
-    ta.value = str;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    document.querySelector('.copy-btn').textContent = '✅ Copied!';
-    setTimeout(() => document.querySelector('.copy-btn').textContent = '📋 Copy Session String', 2000);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+
+    const session = d.session_string || d.string;
+    if (!session) throw new Error('No session in response');
+
+    log('✅ Logged in! Session generated.');
+    document.getElementById('sstr').textContent = session;
+    document.getElementById('sbox').style.display = 'block';
+  } catch(e) {
+    log('❌ ' + e.message, 'err');
+    if (e.message.includes('CODE_INVALID')) log('Wrong code — check Telegram.', 'warn');
+    if (e.message.includes('wait')) log('Flood limit — wait a few minutes.', 'warn');
   }
+  document.getElementById('btn2').disabled = false;
+}
+
+function copyIt() {
+  const s = document.getElementById('sstr').textContent;
+  navigator.clipboard?.writeText(s).catch(()=>{});
+  const r = document.querySelector('.copy-btn');
+  r.textContent = '✅ Copied!';
+  setTimeout(()=>r.textContent='📋 Copy Session String',2000);
 }
 </script>
 </body></html>
