@@ -82,7 +82,15 @@ async function waitForCode() {
       }
       return await waitForCode();
     },
-    onError: (err) => console.error('TG Error:', err.message),
+    onError: (err) => {
+      console.error('TG Error:', err.message);
+      if (err.message && err.message.includes('wait of')) {
+        const secs = err.message.match(/wait of (\d+)/)?.[1] || '?';
+        console.error(`\n⏳ FLOOD LIMIT: Telegram says wait ${secs} seconds (~${Math.ceil(secs/60)} minutes)`);
+        console.error('Delete TG_CODE variable in Railway → wait the time → try again with fresh OTP');
+        process.exit(1);
+      }
+    },
   });
 
   const session = client.session.save();
