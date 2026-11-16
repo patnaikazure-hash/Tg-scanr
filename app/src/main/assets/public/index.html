@@ -138,7 +138,7 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px
         <label>OTP Code from Telegram</label>
         <input class="input" id="inp-otp" type="number" placeholder="12345">
         <div id="pass-section" style="display:none">
-          <label>2FA Password (if enabled)</label>
+          <label>2FA Password</label>
           <input class="input" id="inp-pass" type="password" placeholder="password">
         </div>
         <button class="btn btn-primary" id="verify-btn" onclick="verifyOTP()">Verify</button>
@@ -181,22 +181,30 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px
 
 <script src="telegram.bundle.js"></script>
 <script>
-// ─── Bundle check ────────────────────────────────────────
+// ─── Bundle guard ────────────────────────────────────────
+// With library.type:'var', webpack emits: var GramJS = {...}
+// That becomes window.GramJS automatically in browser/WebView context.
+// If GramJS is undefined here, the bundle didn't load.
 window.addEventListener('load', function() {
   if (typeof GramJS === 'undefined') {
     document.getElementById('scan-log').innerHTML =
-      '<p class="err">❌ telegram.bundle.js failed to load. Check if APK was built correctly.</p>';
+      '<p class="err">❌ telegram.bundle.js failed to load. Reinstall APK.</p>';
+    document.getElementById('login-log').innerHTML =
+      '<p class="err">❌ telegram.bundle.js failed to load. Reinstall APK.</p>';
+  } else {
+    console.log('GramJS bundle loaded OK. Keys:', Object.keys(GramJS).join(', '));
   }
 });
 
 // ─── State ───────────────────────────────────────────────
 const API_ID   = () => parseInt(document.getElementById('set-api-id').value)   || 18550618;
-const API_HASH = () => document.getElementById('set-api-hash').value            || 'e98b922550a95f725dfc30e13571589f';
+const API_HASH = () => document.getElementById('set-api-hash').value.trim()     || 'e98b922550a95f725dfc30e13571589f';
 
-let client = null;
+let client       = null;
 let phoneCodeHash = null;
-let results = [];
-let scanning = false;
+let results      = [];
+let scanning     = false;
+let awaitingPass = false; // true when 2FA password is needed
 
 // ─── Utils ───────────────────────────────────────────────
 function showTab(tab) {
@@ -210,8 +218,10 @@ function showTab(tab) {
   if (tab === 'login') checkSavedSession();
 }
 
-function log(msg, type='', target='scan-log') {
+function log(msg, type, target) {
+  target = target || 'scan-log';
   const el = document.getElementById(target);
+  if (!el) return;
   const p = document.createElement('p');
   p.textContent = new Date().toLocaleTimeString() + ' ' + msg;
   if (type) p.className = type;
@@ -226,13 +236,14 @@ function saveSettings() {
 }
 
 function checkSavedSession() {
-  const sess = localStorage.getItem('tg_session');
+  const sess  = localStorage.getItem('tg_session');
   const saved = document.getElementById('saved-session');
   const form  = document.getElementById('login-form');
-  if (sess) {
+  if (sess && sess.length > 10) {
     saved.style.display = 'block';
     form.style.display  = 'none';
-    document.getElementById('session-display').textContent = 'Session saved ✓ (' + sess.substring(0,30) + '…)';
+    document.getElementById('session-display').textContent =
+      'Session saved ✓ (' + sess.substring(0, 30) + '…)';
   } else {
     saved.style.display = 'none';
     form.style.display  = 'block';
@@ -241,43 +252,71 @@ function checkSavedSession() {
 
 function logout() {
   localStorage.removeItem('tg_session');
-  if (client) { try { client.disconnect(); } catch(e){} client = null; }
+  if (client) {
+    try { client.disconnect(); } catch(e) {}
+    client = null;
+  }
   checkSavedSession();
-  log('Logged out.', 'info');
+  log('Logged out.', 'info', 'scan-log');
 }
 
-// ─── GramJS client ───────────────────────────────────────
-async function getClient() {
-  if (client) return client;
-  const { TelegramClient, StringSession } = window.GramJS;
-  const sess = new StringSession(localStorage.getItem('tg_session') || '');
-  client = new TelegramClient(sess, API_ID(), API_HASH(), {
+// ─── GramJS client factory ───────────────────────────────
+// Always creates a fresh client (don't cache across login/scan)
+function makeClient(sessionStr) {
+  const TelegramClient = window.GramJS.TelegramClient;
+  const StringSession  = window.GramJS.StringSession;
+  const sess = new StringSession(sessionStr || '');
+  return new TelegramClient(sess, API_ID(), API_HASH(), {
     connectionRetries: 5,
     useWSS: true,
   });
+}
+
+async function getClient() {
+  if (client && client.connected) return client;
+  if (!client) {
+    client = makeClient(localStorage.getItem('tg_session') || '');
+  }
+  await client.connect();
   return client;
 }
 
 // ─── LOGIN ───────────────────────────────────────────────
 async function sendOTP() {
+  if (typeof GramJS === 'undefined') {
+    return log('Bundle not loaded! Cannot connect.', 'err', 'login-log');
+  }
+
   const phone = document.getElementById('inp-phone').value.trim();
   if (!phone) return alert('Enter phone number');
 
   const btn = document.getElementById('send-btn');
-  btn.disabled = true; btn.textContent = 'Sending…';
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
   log('Connecting to Telegram…', 'info', 'login-log');
 
   try {
-    const c = await getClient();
-    await c.connect();
-    const result = await c.sendCode({ apiId: API_ID(), apiHash: API_HASH() }, phone);
+    // Always create a fresh unauthenticated client for login
+    if (client) { try { client.disconnect(); } catch(e){} }
+    client = makeClient('');
+
+    await client.connect();
+    log('Connected. Sending code…', 'info', 'login-log');
+
+    const result = await client.sendCode(
+      { apiId: API_ID(), apiHash: API_HASH() },
+      phone
+    );
     phoneCodeHash = result.phoneCodeHash;
+    awaitingPass  = false;
+
     log('OTP sent! Check Telegram app.', 'ok', 'login-log');
-    document.getElementById('otp-section').style.display = 'block';
+    document.getElementById('otp-section').style.display   = 'block';
     document.getElementById('send-otp-wrap').style.display = 'none';
   } catch(e) {
-    log('Error: ' + e.message, 'err', 'login-log');
-    btn.disabled = false; btn.textContent = 'Send OTP';
+    log('Error: ' + (e.message || String(e)), 'err', 'login-log');
+    btn.disabled    = false;
+    btn.textContent = 'Send OTP';
   }
 }
 
@@ -285,199 +324,263 @@ async function verifyOTP() {
   const phone = document.getElementById('inp-phone').value.trim();
   const code  = document.getElementById('inp-otp').value.trim();
   const pass  = document.getElementById('inp-pass').value.trim();
-  if (!code) return alert('Enter OTP code');
 
   const btn = document.getElementById('verify-btn');
-  btn.disabled = true; btn.textContent = 'Verifying…';
-  log('Verifying OTP…', 'info', 'login-log');
+  btn.disabled    = true;
+  btn.textContent = 'Verifying…';
 
   try {
-    const c = await getClient();
-    try {
-      await c.invoke(new window.GramJS.Api.auth.SignIn({
-        phoneNumber: phone,
-        phoneCodeHash: phoneCodeHash,
-        phoneCode: code,
-      }));
-    } catch(e) {
-      if (e.errorMessage === 'SESSION_PASSWORD_NEEDED') {
-        log('2FA required — enter password below', 'info', 'login-log');
-        document.getElementById('pass-section').style.display = 'block';
-        btn.disabled = false; btn.textContent = 'Verify';
+    // Handle 2FA path
+    if (awaitingPass) {
+      if (!pass) {
+        log('Enter your 2FA password above', 'err', 'login-log');
+        btn.disabled    = false;
+        btn.textContent = 'Verify';
         return;
       }
-      throw e;
+      log('Checking 2FA password…', 'info', 'login-log');
+      await client.invoke(new GramJS.Api.auth.CheckPassword({
+        password: await client.computeCheck(
+          await client.invoke(new GramJS.Api.account.GetPassword()),
+          pass
+        )
+      }));
+    } else {
+      if (!code) return (btn.disabled = false, btn.textContent = 'Verify', alert('Enter OTP code'));
+      log('Verifying code…', 'info', 'login-log');
+      try {
+        await client.invoke(new GramJS.Api.auth.SignIn({
+          phoneNumber:   phone,
+          phoneCodeHash: phoneCodeHash,
+          phoneCode:     code,
+        }));
+      } catch(e) {
+        if (e.errorMessage === 'SESSION_PASSWORD_NEEDED') {
+          awaitingPass = true;
+          log('2FA required — enter password below and tap Verify again', 'info', 'login-log');
+          document.getElementById('pass-section').style.display = 'block';
+          btn.disabled    = false;
+          btn.textContent = 'Verify';
+          return;
+        }
+        throw e;
+      }
     }
 
-    const session = c.session.save();
+    // Success
+    const session = client.session.save();
     localStorage.setItem('tg_session', session);
     log('Login successful! Session saved.', 'ok', 'login-log');
-    setTimeout(() => { showTab('dashboard'); checkSavedSession(); }, 1000);
+    setTimeout(function() { showTab('dashboard'); checkSavedSession(); }, 800);
 
   } catch(e) {
-    log('Error: ' + e.message, 'err', 'login-log');
-    btn.disabled = false; btn.textContent = 'Verify';
+    log('Error: ' + (e.message || String(e)), 'err', 'login-log');
+    btn.disabled    = false;
+    btn.textContent = 'Verify';
   }
 }
 
-// ─── SCAN ────────────────────────────────────────────────
+// ─── Firebase URL extraction ──────────────────────────────
 function extractFirebaseUrls(text) {
   if (!text) return [];
-  const re = /https?:\/\/([a-zA-Z0-9-]+)\.firebaseio\.com\b[^\s"']*/g;
-  const matches = [...text.matchAll(re)];
-  return matches.map(m => m[0].replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g,''));
-}
-
-async function checkFirebase(url) {
-  const base = url.replace(/\/+$/, '').split('?')[0];
-  const checkUrl = base + '/.json?shallow=true&timeout=5s';
-  try {
-    const resp = await fetch(checkUrl, { signal: AbortSignal.timeout(6000) });
-    if (resp.status === 200) {
-      const data = await resp.json();
-      if (data === null) return { status: 'live', devices: 0, activeDevices: 0 };
-      const keys = Object.keys(data);
-      let active = 0;
-      // try to count devices
-      const deviceKeys = keys.filter(k => /device|token|fcm|push|reg/i.test(k));
-      active = deviceKeys.length;
-      return { status: 'live', devices: keys.length, activeDevices: active };
-    } else if (resp.status === 401 || resp.status === 403) {
-      return { status: 'live', devices: '?', activeDevices: '?' };
-    } else {
-      return { status: 'dead', devices: 0, activeDevices: 0 };
-    }
-  } catch(e) {
-    return { status: 'dead', devices: 0, activeDevices: 0 };
+  const re = /https?:\/\/([a-zA-Z0-9-]+)\.firebaseio\.com\b[^\s"'\]>]*/g;
+  var matches = [];
+  var m;
+  while ((m = re.exec(text)) !== null) {
+    matches.push(m[0].replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g,''));
   }
+  return matches;
 }
 
+// ─── Firebase liveness check ──────────────────────────────
+function checkFirebase(url) {
+  return new Promise(function(resolve) {
+    var base     = url.replace(/\/+$/, '').split('?')[0];
+    var checkUrl = base + '/.json?shallow=true&timeout=5s';
+    var done     = false;
+
+    // Manual timeout — AbortSignal.timeout not available on older Android
+    var timer = setTimeout(function() {
+      if (!done) { done = true; resolve({ status: 'dead', devices: 0, activeDevices: 0 }); }
+    }, 7000);
+
+    fetch(checkUrl)
+      .then(function(resp) {
+        if (done) return;
+        clearTimeout(timer);
+        done = true;
+        if (resp.status === 200) {
+          resp.json().then(function(data) {
+            if (!data) return resolve({ status: 'live', devices: 0, activeDevices: 0 });
+            var keys       = Object.keys(data);
+            var deviceKeys = keys.filter(function(k) { return /device|token|fcm|push|reg/i.test(k); });
+            resolve({ status: 'live', devices: keys.length, activeDevices: deviceKeys.length });
+          }).catch(function() {
+            resolve({ status: 'live', devices: '?', activeDevices: '?' });
+          });
+        } else if (resp.status === 401 || resp.status === 403) {
+          resolve({ status: 'live', devices: '?', activeDevices: '?' });
+        } else {
+          resolve({ status: 'dead', devices: 0, activeDevices: 0 });
+        }
+      })
+      .catch(function() {
+        if (!done) { done = true; clearTimeout(timer); resolve({ status: 'dead', devices: 0, activeDevices: 0 }); }
+      });
+  });
+}
+
+// ─── Render results ───────────────────────────────────────
 function renderResults() {
-  const el = document.getElementById('results-list');
+  var el = document.getElementById('results-list');
   document.getElementById('results-title').textContent = 'Results (' + results.length + ')';
-  document.getElementById('stat-total').textContent = results.length;
-  document.getElementById('stat-live').textContent  = results.filter(r => r.status==='live').length;
-  document.getElementById('stat-dead').textContent  = results.filter(r => r.status==='dead').length;
+  document.getElementById('stat-total').textContent    = results.length;
+  document.getElementById('stat-live').textContent     = results.filter(function(r){ return r.status==='live'; }).length;
+  document.getElementById('stat-dead').textContent     = results.filter(function(r){ return r.status==='dead'; }).length;
 
-  if (!results.length) { el.innerHTML = '<div class="empty">No Firebase links found yet</div>'; return; }
+  if (!results.length) {
+    el.innerHTML = '<div class="empty">No Firebase links found yet</div>';
+    return;
+  }
 
-  el.innerHTML = results.map(r => `
-    <div class="fb-item">
-      <div class="fb-url">${r.url}</div>
-      <div class="fb-meta">
-        <span class="badge ${r.status==='checking'?'checking':r.status==='live'?'live':'dead'}">
-          ${r.status==='checking'?'⏳ checking':r.status==='live'?'✅ LIVE':'❌ DEAD'}
-        </span>
-        ${r.status!=='checking' ? `<span>📦 Keys: ${r.devices}</span><span>📱 Device keys: ${r.activeDevices}</span>` : ''}
-        <span style="color:#555">from: ${r.chatTitle||'?'}</span>
-      </div>
-    </div>
-  `).join('');
+  el.innerHTML = results.map(function(r) {
+    var badgeClass = r.status==='checking' ? 'checking' : r.status==='live' ? 'live' : 'dead';
+    var badgeText  = r.status==='checking' ? '⏳ checking' : r.status==='live' ? '✅ LIVE' : '❌ DEAD';
+    var metaExtra  = r.status!=='checking'
+      ? '<span>📦 Keys: ' + r.devices + '</span><span>📱 Device keys: ' + r.activeDevices + '</span>'
+      : '';
+    return '<div class="fb-item">'
+      + '<div class="fb-url">' + r.url + '</div>'
+      + '<div class="fb-meta">'
+      + '<span class="badge ' + badgeClass + '">' + badgeText + '</span>'
+      + metaExtra
+      + '<span style="color:#555">from: ' + (r.chatTitle||'?') + '</span>'
+      + '</div></div>';
+  }).join('');
 }
 
+// ─── SCAN ─────────────────────────────────────────────────
 async function startScan() {
   if (scanning) return;
-  const session = localStorage.getItem('tg_session');
-  if (!session) {
+
+  if (typeof GramJS === 'undefined') {
+    return log('Bundle not loaded! Reinstall APK.', 'err');
+  }
+
+  var session = localStorage.getItem('tg_session');
+  if (!session || session.length < 10) {
     alert('Please login first! Go to Login tab.');
     showTab('login');
     return;
   }
 
   scanning = true;
-  results = [];
-  const btn = document.getElementById('scan-btn');
-  btn.disabled = true; btn.textContent = '⏳ Scanning…';
+  results  = [];
+  var btn  = document.getElementById('scan-btn');
+  btn.disabled    = true;
+  btn.textContent = '⏳ Scanning…';
   document.getElementById('scan-log').innerHTML = '';
   document.getElementById('progress-bar').style.display = 'block';
-  document.getElementById('progress-fill').style.width = '0%';
-  document.getElementById('stat-chats').textContent = '0';
+  document.getElementById('progress-fill').style.width  = '0%';
+  document.getElementById('stat-chats').textContent     = '0';
   renderResults();
 
   try {
-    log('Connecting…', 'info');
-    const c = await getClient();
-    await c.connect();
+    log('Connecting to Telegram…', 'info');
+
+    // Always fresh client for scan to avoid stale connections
+    if (client) { try { client.disconnect(); } catch(e){} client = null; }
+    client = makeClient(session);
+    await client.connect();
     log('Connected ✓', 'ok');
 
     log('Fetching dialogs…', 'info');
-    const checkAll = document.getElementById('chk-all-chats').checked;
-    const dialogs = await c.getDialogs({ limit: 500 });
+    var checkAll = document.getElementById('chk-all-chats').checked;
+    var dialogs  = await client.getDialogs({ limit: 500 });
     log('Found ' + dialogs.length + ' chats', 'info');
 
-    const seen = new Set();
-    let chatsDone = 0;
+    var seen      = {};
+    var chatsDone = 0;
 
-    for (const dialog of dialogs) {
-      const entity = dialog.entity;
-      if (!entity) continue;
-      const title = dialog.title || dialog.name || 'Chat';
+    for (var i = 0; i < dialogs.length; i++) {
+      var dialog = dialogs[i];
+      var entity = dialog.entity;
+      if (!entity) { chatsDone++; continue; }
+      var title = dialog.title || dialog.name || 'Chat';
 
-      // skip private DMs if setting unchecked
-      if (!checkAll) {
-        const isPrivate = entity.className === 'User';
-        if (isPrivate) continue;
+      if (!checkAll && entity.className === 'User') {
+        chatsDone++;
+        continue;
       }
 
       try {
-        const msgs = await c.getMessages(entity, { limit: 100 });
-        for (const msg of msgs) {
-          const text = msg.message || msg.text || '';
-          const urls = extractFirebaseUrls(text);
-          for (const url of urls) {
-            const key = url.split('?')[0].toLowerCase();
-            if (seen.has(key)) continue;
-            seen.add(key);
-            const item = { url, chatTitle: title, status: 'checking', devices: 0, activeDevices: 0 };
-            results.push(item);
+        var msgs = await client.getMessages(entity, { limit: 100 });
+        for (var j = 0; j < msgs.length; j++) {
+          var msg  = msgs[j];
+          var text = msg.message || msg.text || '';
+          var urls = extractFirebaseUrls(text);
+          for (var k = 0; k < urls.length; k++) {
+            var url = urls[k];
+            var key = url.split('?')[0].toLowerCase();
+            if (seen[key]) continue;
+            seen[key] = true;
+            results.push({ url: url, chatTitle: title, status: 'checking', devices: 0, activeDevices: 0 });
             renderResults();
-            log('Found: ' + url.substring(0,50), 'ok');
+            log('Found: ' + url.substring(0, 60), 'ok');
           }
         }
-      } catch(e) { /* skip inaccessible chats */ }
+      } catch(e) { /* skip inaccessible chats silently */ }
 
       chatsDone++;
       document.getElementById('stat-chats').textContent = chatsDone;
-      const pct = Math.round((chatsDone / dialogs.length) * 80);
+      var pct = Math.round((chatsDone / dialogs.length) * 80);
       document.getElementById('progress-fill').style.width = pct + '%';
     }
 
-    log('Scan done! Found ' + results.length + ' unique links. Checking Firebase…', 'info');
+    log('Scan done! ' + results.length + ' unique Firebase links found.', 'info');
 
-    // check firebase liveness
-    if (document.getElementById('chk-check-firebase').checked) {
-      for (let i = 0; i < results.length; i++) {
-        const info = await checkFirebase(results[i].url);
-        results[i] = { ...results[i], ...info };
+    if (document.getElementById('chk-check-firebase').checked && results.length > 0) {
+      log('Checking liveness…', 'info');
+      for (var i = 0; i < results.length; i++) {
+        var info = await checkFirebase(results[i].url);
+        results[i].status       = info.status;
+        results[i].devices      = info.devices;
+        results[i].activeDevices = info.activeDevices;
         renderResults();
-        document.getElementById('progress-fill').style.width = (80 + Math.round((i+1)/results.length*20)) + '%';
+        document.getElementById('progress-fill').style.width =
+          (80 + Math.round((i + 1) / results.length * 20)) + '%';
       }
     } else {
-      results.forEach(r => r.status = 'live');
+      for (var i = 0; i < results.length; i++) results[i].status = 'live';
     }
 
-    log('All done! ' + results.filter(r=>r.status==='live').length + ' live, ' + results.filter(r=>r.status==='dead').length + ' dead', 'ok');
+    var live = results.filter(function(r){ return r.status==='live'; }).length;
+    var dead = results.filter(function(r){ return r.status==='dead'; }).length;
+    log('All done! ' + live + ' live, ' + dead + ' dead', 'ok');
     document.getElementById('progress-fill').style.width = '100%';
-    setTimeout(() => document.getElementById('progress-bar').style.display = 'none', 2000);
+    setTimeout(function() {
+      document.getElementById('progress-bar').style.display = 'none';
+    }, 2000);
 
   } catch(e) {
-    log('Error: ' + e.message, 'err');
+    log('Error: ' + (e.message || String(e)), 'err');
   }
 
-  scanning = false;
-  btn.disabled = false; btn.textContent = '🔍 Scan Now';
+  scanning          = false;
+  btn.disabled      = false;
+  btn.textContent   = '🔍 Scan Now';
   renderResults();
 }
 
 // ─── Init ─────────────────────────────────────────────────
 (function init() {
-  const savedId   = localStorage.getItem('api_id');
-  const savedHash = localStorage.getItem('api_hash');
+  var savedId   = localStorage.getItem('api_id');
+  var savedHash = localStorage.getItem('api_hash');
   if (savedId)   document.getElementById('set-api-id').value   = savedId;
   if (savedHash) document.getElementById('set-api-hash').value = savedHash;
 
-  const sess = localStorage.getItem('tg_session');
-  if (sess) {
+  var sess = localStorage.getItem('tg_session');
+  if (sess && sess.length > 10) {
     log('Session found. Ready to scan!', 'ok');
   } else {
     log('No session. Go to Login tab first.', 'info');
