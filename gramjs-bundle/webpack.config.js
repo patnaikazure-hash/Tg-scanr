@@ -1,4 +1,5 @@
-const path = require('path');
+const path    = require('path');
+const webpack = require('webpack');
 
 module.exports = {
   mode: 'production',
@@ -13,28 +14,37 @@ module.exports = {
   },
   resolve: {
     fallback: {
-      fs: false,
-      net: false,
-      tls: false,
-      dns: false,
+      // ── Polyfilled (GramJS needs these) ──────────────────
+      buffer:        require.resolve('buffer/'),
+      events:        require.resolve('events/'),
+      stream:        require.resolve('stream-browserify'),
+      // ── Stubbed (not needed in WebView) ─────────────────
+      fs:            false,
+      net:           false,
+      tls:           false,
+      dns:           false,
       child_process: false,
-      path: false,
-      os: false,
-      util: false,
-      assert: false,
-      stream: false,
-      constants: false,
-      crypto: false,
-      buffer: false,
-      http: false,
-      https: false,
-      zlib: false,
-      events: require.resolve('events/'),
-      url: false,
-      querystring: false,
-      vm: false,
-      worker_threads: false,
-      readline: false,
+      path:          false,
+      os:            false,
+      util:          false,
+      assert:        false,
+      constants:     false,
+      crypto:        false,   // Android WebView has window.crypto natively
+      http:          false,
+      https:         false,
+      zlib:          false,
+      url:           false,
+      querystring:   false,
+      vm:            false,
+      worker_threads:false,
+      readline:      false,
     },
   },
+  plugins: [
+    // Auto-inject Buffer global — many GramJS modules use it directly
+    new webpack.ProvidePlugin({
+      Buffer: ['buffer', 'Buffer'],
+      process: 'process/browser',
+    }),
+  ],
 };

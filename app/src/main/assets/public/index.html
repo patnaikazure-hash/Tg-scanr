@@ -179,23 +179,27 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px
   </div>
 </div>
 
-<script src="telegram.bundle.js"></script>
+<script src="telegram.bundle.js" onerror="window._bundleLoadFailed=true"></script>
 <script>
 // ─── Bundle guard ────────────────────────────────────────
-// With library.type:'var', webpack emits: var GramJS = {...}
-// That becomes window.GramJS automatically in browser/WebView context.
-// If GramJS is undefined here, the bundle didn't load.
 window.addEventListener('load', function() {
-  if (typeof GramJS === 'undefined') {
-    document.getElementById('scan-log').innerHTML =
-      '<p class="err">❌ telegram.bundle.js failed to load. Reinstall APK.</p>';
-    document.getElementById('login-log').innerHTML =
-      '<p class="err">❌ telegram.bundle.js failed to load. Reinstall APK.</p>';
+  if (window._bundleLoadFailed) {
+    var msg = '❌ File load error (onerror fired). APK may be corrupt — reinstall.';
+    document.getElementById('scan-log').innerHTML = '<p class="err">' + msg + '</p>';
+    document.getElementById('login-log').innerHTML = '<p class="err">' + msg + '</p>';
+    return;
+  }
+  if (typeof window.GramJS === 'undefined') {
+    var msg = '❌ telegram.bundle.js loaded but GramJS is undefined. '
+            + 'Bundle likely crashed during init (missing polyfill). '
+            + 'Please wait for a new APK build.';
+    document.getElementById('scan-log').innerHTML = '<p class="err">' + msg + '</p>';
+    document.getElementById('login-log').innerHTML = '<p class="err">' + msg + '</p>';
   } else {
-    console.log('GramJS bundle loaded OK. Keys:', Object.keys(GramJS).join(', '));
-    if (typeof GramJS.computeCheck !== 'function') {
+    console.log('GramJS OK. Keys:', Object.keys(window.GramJS).join(', '));
+    if (typeof window.GramJS.computeCheck !== 'function') {
       document.getElementById('scan-log').innerHTML =
-        '<p class="err">❌ computeCheck missing from bundle. Rebuild needed.</p>';
+        '<p class="err">❌ computeCheck missing. Rebuild needed.</p>';
     }
   }
 });
@@ -278,7 +282,7 @@ function makeClient(sessionStr) {
 
 // ─── LOGIN ───────────────────────────────────────────────
 async function sendOTP() {
-  if (typeof GramJS === 'undefined') {
+  if (typeof window.GramJS === 'undefined') {
     return log('Bundle not loaded! Cannot connect.', 'err', 'login-log');
   }
 
@@ -334,14 +338,14 @@ async function verifyOTP() {
         return;
       }
       log('Checking 2FA password…', 'info', 'login-log');
-      var pwdInfo = await client.invoke(new GramJS.Api.account.GetPassword());
-      var checked = await GramJS.computeCheck(pwdInfo, pass);
-      await client.invoke(new GramJS.Api.auth.CheckPassword({ password: checked }));
+      var pwdInfo = await client.invoke(new window.GramJS.Api.account.GetPassword());
+      var checked = await window.GramJS.computeCheck(pwdInfo, pass);
+      await client.invoke(new window.GramJS.Api.auth.CheckPassword({ password: checked }));
     } else {
       if (!code) return (btn.disabled = false, btn.textContent = 'Verify', alert('Enter OTP code'));
       log('Verifying code…', 'info', 'login-log');
       try {
-        await client.invoke(new GramJS.Api.auth.SignIn({
+        await client.invoke(new window.GramJS.Api.auth.SignIn({
           phoneNumber:   phone,
           phoneCodeHash: phoneCodeHash,
           phoneCode:     code,
@@ -465,7 +469,7 @@ function renderResults() {
 async function startScan() {
   if (scanning) return;
 
-  if (typeof GramJS === 'undefined') {
+  if (typeof window.GramJS === 'undefined') {
     return log('Bundle not loaded! Reinstall APK.', 'err');
   }
 

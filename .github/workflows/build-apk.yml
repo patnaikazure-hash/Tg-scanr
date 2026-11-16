@@ -34,6 +34,9 @@ jobs:
         ls -lah dist/
         cp dist/telegram.bundle.js ../app/src/main/assets/public/telegram.bundle.js
         echo "Bundle copied to assets"
+        # Verify file landed correctly — fail fast if missing
+        ls -lah ../app/src/main/assets/public/
+        test -f ../app/src/main/assets/public/telegram.bundle.js || (echo "ERROR: bundle not in assets!" && exit 1)
 
     - name: Accept Android SDK licenses and install components
       run: |
