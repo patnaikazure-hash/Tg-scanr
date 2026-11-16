@@ -19,16 +19,26 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Accept Android SDK licenses
+    - name: Accept Android SDK licenses and install components
       run: |
         yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
-        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+          "platform-tools" \
+          "platforms;android-34" \
+          "build-tools;34.0.0"
+
+    - name: Download real Gradle wrapper jar
+      run: |
+        curl -L \
+          "https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar" \
+          -o gradle/wrapper/gradle-wrapper.jar
+        ls -lah gradle/wrapper/gradle-wrapper.jar
 
     - name: Grant Gradle execute permission
       run: chmod +x gradlew
 
     - name: Build Release APK
-      run: ./gradlew assembleRelease --no-daemon
+      run: gradle assembleRelease --no-daemon
       env:
         ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
 
