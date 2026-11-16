@@ -30,7 +30,7 @@ jobs:
     - name: Download real Gradle wrapper jar
       run: |
         curl -L \
-          "https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar" \
+          "https://github.com/gradle/gradle/raw/v8.6.0/gradle/wrapper/gradle-wrapper.jar" \
           -o gradle/wrapper/gradle-wrapper.jar
         ls -lah gradle/wrapper/gradle-wrapper.jar
 
@@ -38,7 +38,7 @@ jobs:
       run: chmod +x gradlew
 
     - name: Build Release APK
-      run: gradle assembleRelease --no-daemon
+      run: ./gradlew assembleRelease --no-daemon
       env:
         ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
 
