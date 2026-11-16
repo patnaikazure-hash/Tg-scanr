@@ -18,6 +18,8 @@ module.exports = {
       buffer:        require.resolve('buffer/'),
       events:        require.resolve('events/'),
       stream:        require.resolve('stream-browserify'),
+      // ── Polyfilled (GramJS needs these) ──────────────────
+      crypto:        require.resolve('crypto-browserify'),
       // ── Stubbed (not needed in WebView) ─────────────────
       fs:            false,
       net:           false,
@@ -29,7 +31,6 @@ module.exports = {
       util:          false,
       assert:        false,
       constants:     false,
-      crypto:        false,   // Android WebView has window.crypto natively
       http:          false,
       https:         false,
       zlib:          false,

@@ -5,11 +5,12 @@
     "build": "NODE_ENV=production npx webpack --config webpack.config.js"
   },
   "dependencies": {
-    "telegram": "^2.22.2",
+    "telegram": "2.22.2",
     "events": "^3.3.0",
     "buffer": "^6.0.3",
     "stream-browserify": "^3.0.0",
-    "process": "^0.11.10"
+    "process": "^0.11.10",
+    "crypto-browserify": "^3.12.0"
   },
   "devDependencies": {
     "webpack": "^5.88.0",
