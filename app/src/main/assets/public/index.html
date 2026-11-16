@@ -293,6 +293,8 @@ function makeClient(sessionStr) {
   return new TelegramClient(sess, API_ID(), API_HASH(), {
     connectionRetries: 5,
     useWSS: true,
+    floodSleepThreshold: 60,   // auto-wait on small FLOOD_WAITs instead of erroring
+    requestRetries: 3,
   });
 }
 
@@ -414,40 +416,60 @@ function extractFirebaseUrls(text) {
   return matches;
 }
 
-// ─── Firebase liveness check ──────────────────────────────
+// ─── Concurrency pool — run `worker` over items N-at-a-time ─
+function runPool(items, concurrency, worker) {
+  return new Promise(function(resolve) {
+    var idx = 0, active = 0, finished = 0;
+    if (!items.length) return resolve();
+    function pump() {
+      while (active < concurrency && idx < items.length) {
+        var cur = idx++;
+        active++;
+        Promise.resolve(worker(items[cur], cur)).then(function() {
+          active--; finished++;
+          if (finished === items.length) resolve();
+          else pump();
+        });
+      }
+    }
+    pump();
+  });
+}
+
+// ─── Firebase liveness check (fast, 5s cap) ───────────────
 function checkFirebase(url) {
   return new Promise(function(resolve) {
     var base     = url.replace(/\/+$/, '').split('?')[0];
-    var checkUrl = base + '/.json?shallow=true&timeout=5s';
+    var checkUrl = base + '/.json?shallow=true&timeout=4s';
     var done     = false;
+    function finish(v) { if (!done) { done = true; clearTimeout(timer); resolve(v); } }
 
-    // Manual timeout — AbortSignal.timeout not available on older Android
     var timer = setTimeout(function() {
-      if (!done) { done = true; resolve({ status: 'dead', devices: 0, activeDevices: 0 }); }
-    }, 7000);
+      finish({ status: 'dead', devices: 0, activeDevices: 0 });
+    }, 5000);
 
-    fetch(checkUrl)
+    fetch(checkUrl, { cache: 'no-store', redirect: 'follow' })
       .then(function(resp) {
-        if (done) return;
-        clearTimeout(timer);
-        done = true;
         if (resp.status === 200) {
           resp.json().then(function(data) {
-            if (!data) return resolve({ status: 'live', devices: 0, activeDevices: 0 });
+            if (!data) return finish({ status: 'live', devices: 0, activeDevices: 0 });
             var keys       = Object.keys(data);
-            var deviceKeys = keys.filter(function(k) { return /device|token|fcm|push|reg/i.test(k); });
-            resolve({ status: 'live', devices: keys.length, activeDevices: deviceKeys.length });
+            var deviceKeys = keys.filter(function(k) { return /device|token|fcm|push|reg|user|uid/i.test(k); });
+            finish({ status: 'live', devices: keys.length, activeDevices: deviceKeys.length });
           }).catch(function() {
-            resolve({ status: 'live', devices: '?', activeDevices: '?' });
+            finish({ status: 'live', devices: '?', activeDevices: '?' });
           });
         } else if (resp.status === 401 || resp.status === 403) {
-          resolve({ status: 'live', devices: '?', activeDevices: '?' });
+          // exists but locked (rules deny read) — still a LIVE database
+          finish({ status: 'live', devices: '🔒', activeDevices: '🔒' });
+        } else if (resp.status === 404) {
+          finish({ status: 'dead', devices: 0, activeDevices: 0 });
         } else {
-          resolve({ status: 'dead', devices: 0, activeDevices: 0 });
+          finish({ status: 'dead', devices: 0, activeDevices: 0 });
         }
       })
       .catch(function() {
-        if (!done) { done = true; clearTimeout(timer); resolve({ status: 'dead', devices: 0, activeDevices: 0 }); }
+        finish({ status: 'dead', devices: 0, activeDevices: 0 });
       });
   });
 }
@@ -481,6 +503,116 @@ function renderResults() {
   }).join('');
 }
 
+// ─── Helpers for scan ─────────────────────────────────────
+var seen = {};
+function addLink(url, title) {
+  var key = url.split('?')[0].toLowerCase();
+  if (seen[key]) return false;
+  seen[key] = true;
+  results.push({ url: url, chatTitle: title || '?', status: 'checking', devices: 0, activeDevices: 0 });
+  return true;
+}
+function setProgress(pct) { document.getElementById('progress-fill').style.width = pct + '%'; }
+
+// Build id→title map from a SearchGlobal result's chats/users arrays
+function buildTitleMap(chats, users) {
+  var map = {};
+  (chats || []).forEach(function(c) {
+    try { map[c.id.toString()] = c.title || c.username || 'Channel'; } catch(e) {}
+  });
+  (users || []).forEach(function(u) {
+    try {
+      var n = (u.firstName || '') + (u.lastName ? ' ' + u.lastName : '');
+      map[u.id.toString()] = (n.trim() || u.username || 'User');
+    } catch(e) {}
+  });
+  return map;
+}
+function titleOfMessage(msg, map) {
+  try {
+    var p = msg.peerId; if (!p) return 'Chat';
+    var id = p.channelId || p.chatId || p.userId;
+    if (id != null && map[id.toString()]) return map[id.toString()];
+  } catch(e) {}
+  return 'Chat';
+}
+
+// ─── FAST PATH: Telegram server-side global search ────────
+async function searchGlobalFirebase() {
+  var G = window.GramJS.Api;
+  var offsetRate = 0, offsetId = 0;
+  var offsetPeer = new G.InputPeerEmpty();
+  var pages = 0, totalMsgs = 0;
+
+  while (pages < 25) {
+    var res = await client.invoke(new G.messages.SearchGlobal({
+      q: 'firebaseio',
+      filter: new G.InputMessagesFilterEmpty(),
+      minDate: 0, maxDate: 0,
+      offsetRate: offsetRate,
+      offsetPeer: offsetPeer,
+      offsetId: offsetId,
+      limit: 100,
+    }));
+
+    var msgs = res.messages || [];
+    if (!msgs.length) break;
+    totalMsgs += msgs.length;
+
+    var map = buildTitleMap(res.chats, res.users);
+    var added = 0;
+    for (var m = 0; m < msgs.length; m++) {
+      var text = msgs[m].message || '';
+      var urls = extractFirebaseUrls(text);
+      for (var u = 0; u < urls.length; u++) {
+        if (addLink(urls[u], titleOfMessage(msgs[m], map))) added++;
+      }
+    }
+    if (added) renderResults();
+    document.getElementById('stat-chats').textContent = totalMsgs;
+    setProgress(Math.min(70, 10 + pages * 8));
+
+    if (!res.nextRate) break;              // no more pages
+    offsetRate = res.nextRate;
+    var last = msgs[msgs.length - 1];
+    offsetId = last.id;
+    try { offsetPeer = await client.getInputEntity(last.peerId); }
+    catch (e) { offsetPeer = new G.InputPeerEmpty(); }
+    pages++;
+  }
+  return results.length;
+}
+
+// ─── FALLBACK: per-chat scan, parallelized ────────────────
+async function deepScanParallel() {
+  var checkAll = document.getElementById('chk-all-chats').checked;
+  var dialogs  = await client.getDialogs({ limit: 500 });
+  log('Deep scan: ' + dialogs.length + ' chats', 'info');
+
+  var targets = dialogs.filter(function(d) {
+    if (!d.entity) return false;
+    if (!checkAll && d.entity.className === 'User') return false;
+    return true;
+  });
+
+  var done = 0;
+  await runPool(targets, 8, async function(dialog) {
+    var title = dialog.title || dialog.name || 'Chat';
+    try {
+      var msgs = await client.getMessages(dialog.entity, { limit: 100, search: 'firebaseio' });
+      var added = 0;
+      for (var j = 0; j < msgs.length; j++) {
+        var urls = extractFirebaseUrls(msgs[j].message || msgs[j].text || '');
+        for (var k = 0; k < urls.length; k++) if (addLink(urls[k], title)) added++;
+      }
+      if (added) renderResults();
+    } catch (e) { /* inaccessible chat — skip */ }
+    done++;
+    document.getElementById('stat-chats').textContent = done;
+    setProgress(Math.min(70, Math.round(done / targets.length * 70)));
+  });
+}
+
 // ─── SCAN ─────────────────────────────────────────────────
 async function startScan() {
   if (scanning) return;
@@ -498,99 +630,71 @@ async function startScan() {
 
   scanning = true;
   results  = [];
+  seen     = {};
   var btn  = document.getElementById('scan-btn');
   btn.disabled    = true;
   btn.textContent = '⏳ Scanning…';
   document.getElementById('scan-log').innerHTML = '';
   document.getElementById('progress-bar').style.display = 'block';
-  document.getElementById('progress-fill').style.width  = '0%';
-  document.getElementById('stat-chats').textContent     = '0';
+  setProgress(0);
+  document.getElementById('stat-chats').textContent = '0';
   renderResults();
 
+  var t0 = Date.now();
   try {
-    log('Connecting to Telegram…', 'info');
-
-    // Always fresh client for scan to avoid stale connections
+    log('Connecting…', 'info');
     if (client) { try { client.disconnect(); } catch(e){} client = null; }
     client = makeClient(session);
     await client.connect();
     log('Connected ✓', 'ok');
 
-    log('Fetching dialogs…', 'info');
-    var checkAll = document.getElementById('chk-all-chats').checked;
-    var dialogs  = await client.getDialogs({ limit: 500 });
-    log('Found ' + dialogs.length + ' chats', 'info');
-
-    var seen      = {};
-    var chatsDone = 0;
-
-    for (var i = 0; i < dialogs.length; i++) {
-      var dialog = dialogs[i];
-      var entity = dialog.entity;
-      if (!entity) { chatsDone++; continue; }
-      var title = dialog.title || dialog.name || 'Chat';
-
-      if (!checkAll && entity.className === 'User') {
-        chatsDone++;
-        continue;
-      }
-
-      try {
-        var msgs = await client.getMessages(entity, { limit: 100 });
-        for (var j = 0; j < msgs.length; j++) {
-          var msg  = msgs[j];
-          var text = msg.message || msg.text || '';
-          var urls = extractFirebaseUrls(text);
-          for (var k = 0; k < urls.length; k++) {
-            var url = urls[k];
-            var key = url.split('?')[0].toLowerCase();
-            if (seen[key]) continue;
-            seen[key] = true;
-            results.push({ url: url, chatTitle: title, status: 'checking', devices: 0, activeDevices: 0 });
-            renderResults();
-            log('Found: ' + url.substring(0, 60), 'ok');
-          }
-        }
-      } catch(e) { /* skip inaccessible chats silently */ }
-
-      chatsDone++;
-      document.getElementById('stat-chats').textContent = chatsDone;
-      var pct = Math.round((chatsDone / dialogs.length) * 80);
-      document.getElementById('progress-fill').style.width = pct + '%';
+    // Try the fast server-side search first
+    var found = 0;
+    try {
+      log('Searching all chats (fast)…', 'info');
+      found = await searchGlobalFirebase();
+    } catch (e) {
+      log('Fast search unavailable — deep scanning…', 'info');
+      found = 0;
     }
 
-    log('Scan done! ' + results.length + ' unique Firebase links found.', 'info');
+    // Fall back to per-chat scan only if search found nothing
+    if (found === 0) {
+      await deepScanParallel();
+    }
 
+    log(results.length + ' unique Firebase links found', 'ok');
+    setProgress(72);
+
+    // ── Liveness checks IN PARALLEL ──
     if (document.getElementById('chk-check-firebase').checked && results.length > 0) {
-      log('Checking liveness…', 'info');
-      for (var i = 0; i < results.length; i++) {
-        var info = await checkFirebase(results[i].url);
-        results[i].status       = info.status;
-        results[i].devices      = info.devices;
-        results[i].activeDevices = info.activeDevices;
+      log('Checking ' + results.length + ' links (parallel)…', 'info');
+      var checked = 0;
+      await runPool(results, 12, async function(r) {
+        var info = await checkFirebase(r.url);
+        r.status = info.status; r.devices = info.devices; r.activeDevices = info.activeDevices;
+        checked++;
         renderResults();
-        document.getElementById('progress-fill').style.width =
-          (80 + Math.round((i + 1) / results.length * 20)) + '%';
-      }
+        setProgress(72 + Math.round(checked / results.length * 28));
+      });
     } else {
       for (var i = 0; i < results.length; i++) results[i].status = 'live';
     }
 
     var live = results.filter(function(r){ return r.status==='live'; }).length;
     var dead = results.filter(function(r){ return r.status==='dead'; }).length;
-    log('All done! ' + live + ' live, ' + dead + ' dead', 'ok');
-    document.getElementById('progress-fill').style.width = '100%';
-    setTimeout(function() {
-      document.getElementById('progress-bar').style.display = 'none';
-    }, 2000);
+    var secs = ((Date.now() - t0) / 1000).toFixed(1);
+    log('Done in ' + secs + 's — ' + live + ' live, ' + dead + ' dead', 'ok');
+    setProgress(100);
+    setTimeout(function() { document.getElementById('progress-bar').style.display = 'none'; }, 1500);
 
   } catch(e) {
     log('Error: ' + (e.message || String(e)), 'err');
   }
 
-  scanning          = false;
-  btn.disabled      = false;
-  btn.textContent   = '🔍 Scan Now';
+  scanning        = false;
+  btn.disabled    = false;
+  btn.textContent = '🔍 Scan Now';
   renderResults();
 }
 
