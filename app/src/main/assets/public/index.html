@@ -117,12 +117,12 @@ window.addEventListener('unhandledrejection', function(e) {
       <div class="card-value" style="color:var(--accent)" id="stat-live">0</div>
     </div>
     <div class="card">
-      <div class="card-title">Dead</div>
-      <div class="card-value" style="color:var(--red)" id="stat-dead">0</div>
+      <div class="card-title">Total Devices</div>
+      <div class="card-value" id="stat-devices">0</div>
     </div>
     <div class="card">
-      <div class="card-title">Chats Scanned</div>
-      <div class="card-value" id="stat-chats">0</div>
+      <div class="card-title">Online</div>
+      <div class="card-value" style="color:var(--accent)" id="stat-online">0</div>
     </div>
   </div>
 
@@ -274,8 +274,8 @@ function markSaved(url, info, map) {
   map[normKey(url)] = {
     url: url.split('?')[0],
     status: info.status,
-    devices: info.devices,
-    activeDevices: info.activeDevices,
+    total: info.total,
+    online: info.online,
     ts: Date.now()
   };
 }
@@ -517,44 +517,72 @@ function runPool(items, concurrency, worker) {
   });
 }
 
-// ─── Firebase liveness check — XMLHttpRequest ─────────────
+// ─── Low-level GET via XMLHttpRequest ─────────────────────
 // XHR honours setAllowUniversalAccessFromFileURLs in a file:// WebView,
 // so cross-origin reads to *.firebaseio.com / *.firebasedatabase.app
 // actually return a readable response (fetch() is unreliable there).
-function checkFirebase(url) {
+function xhrGet(url, timeoutMs) {
   return new Promise(function(resolve) {
-    var base     = url.replace(/\/+$/, '').split('?')[0];
-    var checkUrl = base + '/.json?shallow=true&timeout=4s';
-    var done     = false;
-    function finish(v) { if (!done) { done = true; resolve(v); } }
-
     var xhr;
-    try { xhr = new XMLHttpRequest(); xhr.open('GET', checkUrl, true); }
-    catch (e) { return finish({ status: 'dead', devices: 0, activeDevices: 0 }); }
-    xhr.timeout = 8000;
-
+    try { xhr = new XMLHttpRequest(); xhr.open('GET', url, true); }
+    catch (e) { return resolve({ code: 0, text: null }); }
+    xhr.timeout = timeoutMs || 8000;
     xhr.onreadystatechange = function() {
-      if (xhr.readyState !== 4) return;
-      var s = xhr.status;
-      if (s === 200) {
-        var data;
-        try { data = JSON.parse(xhr.responseText); }
-        catch (e) { return finish({ status: 'live', devices: '?', activeDevices: '?' }); }
-        if (data === null || data === undefined) return finish({ status: 'live', devices: 0, activeDevices: 0 });
-        if (typeof data === 'object') {
-          var n = Object.keys(data).length;
-          return finish({ status: 'live', devices: n, activeDevices: 0 });
-        }
-        return finish({ status: 'live', devices: 0, activeDevices: 0 });
-      }
-      if (s === 401 || s === 403) return finish({ status: 'live', devices: '🔒', activeDevices: '🔒' });
-      // s === 0 (blocked/network) or 404 / 5xx → dead
-      return finish({ status: 'dead', devices: 0, activeDevices: 0 });
+      if (xhr.readyState === 4) resolve({ code: xhr.status, text: xhr.responseText });
     };
-    xhr.ontimeout = function() { finish({ status: 'dead', devices: 0, activeDevices: 0 }); };
-    xhr.onerror   = function() { finish({ status: 'dead', devices: 0, activeDevices: 0 }); };
-    try { xhr.send(); } catch (e) { finish({ status: 'dead', devices: 0, activeDevices: 0 }); }
+    xhr.ontimeout = function() { resolve({ code: 0, text: null }); };
+    xhr.onerror   = function() { resolve({ code: 0, text: null }); };
+    try { xhr.send(); } catch (e) { resolve({ code: 0, text: null }); }
   });
+}
+
+// Does a device record look online? (common flag names/values)
+function isOnlineRecord(rec) {
+  if (!rec || typeof rec !== 'object') return false;
+  for (var k in rec) {
+    if (/online|connected|active|status|state|alive|screen/i.test(k)) {
+      var v = rec[k];
+      if (v === true || v === 1) return true;
+      if (typeof v === 'string' && /^(online|true|active|connected|on|1|yes)$/i.test(v.trim())) return true;
+    }
+  }
+  return false;
+}
+
+// ─── Firebase check: live/dead + total & online device count ─
+async function checkFirebase(url) {
+  var base = url.replace(/\/+$/, '').split('?')[0];
+
+  // 1) shallow probe — liveness + top-level keys
+  var r1 = await xhrGet(base + '/.json?shallow=true&timeout=4s', 8000);
+  if (r1.code === 401 || r1.code === 403) return { status: 'live', total: '🔒', online: '🔒' };
+  if (r1.code !== 200 || !r1.text)         return { status: 'dead', total: 0, online: 0 };
+
+  var shallow;
+  try { shallow = JSON.parse(r1.text); } catch (e) { return { status: 'live', total: '?', online: '?' }; }
+  if (!shallow || typeof shallow !== 'object') return { status: 'live', total: 0, online: 0 };
+  var keys = Object.keys(shallow);
+  if (!keys.length) return { status: 'live', total: 0, online: 0 };
+
+  // 2) read the device collection to count total + online
+  // If a small root has a devices-like container, descend into it; else
+  // treat the top-level keys themselves as the device records.
+  var container = null;
+  if (keys.length <= 6) {
+    container = keys.filter(function(k){ return /device|client|victim|bot|phone|target|user|slave|sms|data/i.test(k); })[0];
+  }
+  var dataUrl = base + (container ? '/' + encodeURIComponent(container) : '') + '.json?timeout=6s';
+  var r2 = await xhrGet(dataUrl, 10000);
+  if (r2.code !== 200 || !r2.text) {
+    return { status: 'live', total: container ? '?' : keys.length, online: '?' };
+  }
+  var data;
+  try { data = JSON.parse(r2.text); } catch (e) { return { status: 'live', total: keys.length, online: '?' }; }
+  if (!data || typeof data !== 'object') return { status: 'live', total: keys.length, online: 0 };
+
+  var recs = Object.keys(data), online = 0;
+  for (var i = 0; i < recs.length; i++) { if (isOnlineRecord(data[recs[i]])) online++; }
+  return { status: 'live', total: recs.length, online: online };
 }
 
 // ─── Interleaved checking — check each link as it's found ──
@@ -582,7 +610,7 @@ function maybeCheck(r) {
     await _acquireCheck();
     try {
       var info = await checkFirebase(r.url);
-      r.status = info.status; r.devices = info.devices; r.activeDevices = info.activeDevices;
+      r.status = info.status; r.total = info.total; r.online = info.online;
       markSaved(r.url, info, savedMap);
       renderResults();
     } finally { _releaseCheck(); }
@@ -631,10 +659,13 @@ function copyAllLive() {
 // ─── Render results ───────────────────────────────────────
 function renderResults() {
   var liveCount = results.filter(function(r){ return r.status==='live'; }).length;
-  var deadCount = results.filter(function(r){ return r.status==='dead'; }).length;
-  document.getElementById('stat-total').textContent = results.length;
-  document.getElementById('stat-live').textContent  = liveCount;
-  document.getElementById('stat-dead').textContent  = deadCount;
+  var numOr0 = function(v){ return typeof v === 'number' ? v : 0; };
+  var totDev = results.reduce(function(a,r){ return a + (r.status==='live' ? numOr0(r.total) : 0); }, 0);
+  var totOnline = results.reduce(function(a,r){ return a + (r.status==='live' ? numOr0(r.online) : 0); }, 0);
+  document.getElementById('stat-total').textContent  = results.length;
+  document.getElementById('stat-live').textContent   = liveCount;
+  document.getElementById('stat-devices').textContent = totDev;
+  document.getElementById('stat-online').textContent  = totOnline;
 
   var shown = results.filter(function(r) {
     if (currentFilter === 'live') return r.status === 'live';
@@ -660,9 +691,9 @@ function renderResults() {
     var badgeText  = r.status==='checking' ? '⏳' : r.status==='live' ? '✅ LIVE' : '❌ DEAD';
     var count = '';
     if (r.status === 'live') {
-      count = (r.devices === '🔒')
+      count = (r.total === '🔒')
         ? '<span>🔒 locked</span>'
-        : '<span>📦 ' + r.devices + ' records</span>';
+        : '<span>📱 ' + r.total + ' devices</span><span style="color:var(--accent)">🟢 ' + r.online + ' online</span>';
     }
     return '<div class="fb-item">'
       + '<div class="fb-row">'
@@ -684,7 +715,7 @@ function addLink(url, title) {
   if (seen[key]) return false;                 // duplicate within this scan
   seen[key] = true;
   if (savedMap[key]) { skippedSaved++; return false; } // already checked in a past scan — skip
-  var r = { url: url, chatTitle: title || '?', status: 'checking', devices: 0, activeDevices: 0 };
+  var r = { url: url, chatTitle: title || '?', status: 'checking', total: 0, online: 0 };
   results.push(r);
   maybeCheck(r);   // start the liveness check right away
   return true;
@@ -747,10 +778,9 @@ async function searchGlobalQuery(query) {
 
     if (!res.nextRate) break;
     offsetRate = res.nextRate;
-    var last = msgs[msgs.length - 1];
-    offsetId = last.id;
-    try { offsetPeer = await client.getInputEntity(last.peerId); }
-    catch (e) { offsetPeer = new G.InputPeerEmpty(); }
+    offsetId = msgs[msgs.length - 1].id;
+    // offsetRate + offsetId are enough to page; skip the per-page
+    // getInputEntity round-trip (dedup handles any overlap) — faster.
     pages++;
   }
 }
@@ -791,7 +821,6 @@ async function deepSweepAllChats() {
       if (added) renderResults();
     } catch (e) { /* inaccessible chat — skip */ }
     done++;
-    document.getElementById('stat-chats').textContent = done;
     setProgress(10 + Math.round(done / targets.length * 60));
   });
 }
@@ -824,7 +853,6 @@ async function startScan() {
   document.getElementById('scan-log').innerHTML = '';
   document.getElementById('progress-bar').style.display = 'block';
   setProgress(0);
-  document.getElementById('stat-chats').textContent = '0';
   renderResults();
 
   var t0 = Date.now();
