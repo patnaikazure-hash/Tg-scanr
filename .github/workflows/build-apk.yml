@@ -19,11 +19,6 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Set up Gradle
-      uses: gradle/actions/setup-gradle@v4
-      with:
-        gradle-version: '8.6'
-
     - name: Accept Android SDK licenses and install components
       run: |
         yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
@@ -32,14 +27,16 @@ jobs:
           "platforms;android-34" \
           "build-tools;34.0.0"
 
-    - name: Generate Gradle wrapper
-      run: gradle wrapper --gradle-version 8.6
-
-    - name: Grant Gradle execute permission
-      run: chmod +x gradlew
+    - name: Install Gradle 8.6
+      run: |
+        wget -q https://services.gradle.org/distributions/gradle-8.6-bin.zip -O /tmp/gradle.zip
+        unzip -q /tmp/gradle.zip -d /tmp/gradle-install
+        export PATH="/tmp/gradle-install/gradle-8.6/bin:$PATH"
+        echo "/tmp/gradle-install/gradle-8.6/bin" >> $GITHUB_PATH
+        gradle --version
 
     - name: Build Release APK
-      run: ./gradlew assembleRelease --no-daemon
+      run: gradle assembleRelease --no-daemon
       env:
         ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
 
