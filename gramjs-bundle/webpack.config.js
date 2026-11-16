@@ -21,6 +21,7 @@ module.exports = {
       stream:        require.resolve('stream-browserify'),
       // ── Polyfilled (GramJS needs these) ──────────────────
       crypto:        require.resolve('crypto-browserify'),
+      util:          require.resolve('util/'),   // GramJS uses util.inspect.custom — stubbing it crashed init
       // ── Stubbed (not needed in WebView) ─────────────────
       fs:            false,
       net:           false,
@@ -29,7 +30,6 @@ module.exports = {
       child_process: false,
       path:          false,
       os:            false,
-      util:          false,
       assert:        false,
       constants:     false,
       http:          false,
