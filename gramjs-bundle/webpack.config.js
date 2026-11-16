@@ -7,9 +7,10 @@ module.exports = {
   output: {
     filename: 'telegram.bundle.js',
     path: path.resolve(__dirname, 'dist'),
+    globalObject: 'window',
     library: {
       name: 'GramJS',
-      type: 'var',
+      type: 'window',   // explicit window.GramJS = exports (robust in WebView)
     },
   },
   resolve: {

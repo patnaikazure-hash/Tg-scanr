@@ -74,6 +74,21 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px
 
 .session-info { font-size: 12px; color: var(--muted); background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 12px; word-break: break-all; }
 </style>
+<script>
+// ─── Early global error capture (MUST run before bundle) ──
+// Captures any SyntaxError/ReferenceError thrown while the
+// telegram bundle is being evaluated, so we can show the real
+// cause on screen instead of a vague "GramJS undefined".
+window._errLog = [];
+window.addEventListener('error', function(e) {
+  var where = (e.filename || '?').split('/').pop();
+  var m = e.message || (e.error && e.error.message) || 'unknown error';
+  window._errLog.push(m + '  (' + where + ':' + (e.lineno||'?') + ':' + (e.colno||'?') + ')');
+}, true);
+window.addEventListener('unhandledrejection', function(e) {
+  window._errLog.push('Promise: ' + ((e.reason && e.reason.message) || String(e.reason)));
+});
+</script>
 </head>
 <body>
 
@@ -190,11 +205,12 @@ window.addEventListener('load', function() {
     return;
   }
   if (typeof window.GramJS === 'undefined') {
-    var msg = '❌ telegram.bundle.js loaded but GramJS is undefined. '
-            + 'Bundle likely crashed during init (missing polyfill). '
-            + 'Please wait for a new APK build.';
-    document.getElementById('scan-log').innerHTML = '<p class="err">' + msg + '</p>';
-    document.getElementById('login-log').innerHTML = '<p class="err">' + msg + '</p>';
+    var detail = window._errLog && window._errLog.length
+      ? window._errLog.join(' | ')
+      : 'no JS error was captured — likely a SyntaxError from an old Android WebView. Update Android System WebView in Play Store.';
+    var msg = '❌ GramJS undefined. Real cause: ' + detail;
+    document.getElementById('scan-log').innerHTML = '<p class="err">' + escapeHtml(msg) + '</p>';
+    document.getElementById('login-log').innerHTML = '<p class="err">' + escapeHtml(msg) + '</p>';
   } else {
     console.log('GramJS OK. Keys:', Object.keys(window.GramJS).join(', '));
     if (typeof window.GramJS.computeCheck !== 'function') {
