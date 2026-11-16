@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#0a0a0a">
+<title>TG Firebase Scanner</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#0a0a0a;--bg2:#111;--bg3:#161616;--border:#222;
+  --blue:#2AABEE;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b;--purple:#818cf8;
+  --text:#e0e0e0;--muted:#666;--dim:#333;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,sans-serif;
+  min-height:100vh;padding-bottom:80px}
+/* Nav */
+.nav{position:fixed;bottom:0;left:0;right:0;background:#0d0d0d;border-top:1px solid var(--border);
+  display:flex;z-index:100;padding-bottom:env(safe-area-inset-bottom)}
+.nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;padding:10px 4px 8px;
+  border:none;background:none;color:var(--muted);cursor:pointer;font-size:0.6rem;gap:3px;transition:color 0.2s}
+.nav-btn .icon{font-size:1.2rem}
+.nav-btn.active{color:var(--blue)}
+/* Pages */
+.page{display:none;padding:16px;padding-top:60px}
+.page.active{display:block}
+/* Header */
+.header{position:fixed;top:0;left:0;right:0;background:#0a0a0ade;backdrop-filter:blur(10px);
+  padding:14px 16px 10px;z-index:99;border-bottom:1px solid #1a1a1a}
+.header h1{font-size:1.1rem;color:var(--blue);display:flex;align-items:center;gap:8px}
+.header .sub{font-size:0.65rem;color:var(--muted);margin-top:2px}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);display:inline-block}
+.live-dot.on{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+/* Stats grid */
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px}
+.stat{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:center}
+.stat .n{font-size:2rem;font-weight:800;line-height:1}
+.stat .l{font-size:0.58rem;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+.c-b .n{color:var(--blue)}.c-g .n{color:var(--green)}.c-y .n{color:var(--yellow)}.c-p .n{color:var(--purple)}
+/* Items */
+.item{background:var(--bg2);border-radius:10px;padding:12px 14px;margin-bottom:8px;
+  border-left:3px solid var(--border);transition:border-color .2s}
+.item.live{border-left-color:var(--green)}.item.dead{border-left-color:var(--red)}.item.error{border-left-color:var(--yellow)}
+.item-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px}
+.item-url{font-size:0.7rem;color:var(--muted);word-break:break-all;flex:1;line-height:1.4}
+.badge{font-size:0.58rem;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;white-space:nowrap}
+.badge.live{background:#052e16;color:var(--green)}.badge.dead{background:#450a0a;color:var(--red)}
+.badge.error{background:#422006;color:var(--yellow)}.badge.checking{background:#1e1b4b;color:var(--purple)}
+.detail{font-size:0.62rem;color:var(--dim);font-family:monospace;margin-bottom:4px}
+.pills{display:flex;gap:5px;flex-wrap:wrap}
+.pill{font-size:0.6rem;font-weight:600;padding:2px 7px;border-radius:20px}
+.pp{background:#1e1b4b;color:var(--purple)}.pg{background:#052e16;color:var(--green)}.pi{background:#1c1917;color:#78716c}
+/* Queue */
+.queue-bar{background:#422006;border-radius:8px;padding:8px 12px;margin-bottom:12px;
+  font-size:0.72rem;color:var(--yellow);display:none}
+/* Filter bar */
+.filters{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px}
+.filter-btn{flex-shrink:0;padding:5px 12px;border-radius:20px;border:1px solid var(--border);
+  background:none;color:var(--muted);font-size:0.68rem;cursor:pointer;transition:all .2s}
+.filter-btn.active{background:var(--blue);color:#000;border-color:var(--blue);font-weight:700}
+/* Setup page */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+.card h3{font-size:0.85rem;color:var(--blue);margin-bottom:12px}
+label{font-size:0.7rem;color:var(--muted);display:block;margin-bottom:5px;margin-top:12px}
+input[type=text],input[type=tel],input[type=number],input[type=password]{
+  width:100%;background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;
+  padding:12px 13px;color:var(--text);font-size:1rem;outline:none}
+input:focus{border-color:var(--blue)}
+.btn{width:100%;background:var(--blue);color:#000;font-weight:700;font-size:1rem;
+  padding:14px;border:none;border-radius:10px;cursor:pointer;margin-top:12px;transition:opacity .2s}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+.btn.danger{background:#450a0a;color:var(--red);border:1px solid var(--red)}
+.log{background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:12px;
+  font-family:monospace;font-size:0.68rem;min-height:80px;max-height:160px;
+  overflow-y:auto;white-space:pre-wrap;color:#4ade80}
+/* Settings */
+.setting-row{display:flex;justify-content:space-between;align-items:center;
+  padding:14px 0;border-bottom:1px solid #161616}
+.setting-row:last-child{border-bottom:none}
+.setting-label{font-size:0.85rem}
+.setting-sub{font-size:0.65rem;color:var(--muted);margin-top:2px}
+.toggle{width:44px;height:24px;border-radius:12px;background:var(--bg3);border:none;
+  position:relative;cursor:pointer;transition:background .2s}
+.toggle.on{background:var(--blue)}
+.toggle::after{content:'';position:absolute;width:18px;height:18px;border-radius:50%;
+  background:#fff;top:3px;left:3px;transition:transform .2s}
+.toggle.on::after{transform:translateX(20px)}
+.url-input-wrap{display:flex;gap:8px;align-items:center}
+.url-input-wrap input{flex:1}
+.url-input-wrap button{padding:12px 14px;background:var(--blue);color:#000;border:none;
+  border-radius:8px;font-weight:700;cursor:pointer;white-space:nowrap;font-size:0.85rem}
+.empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:0.8rem}
+.empty .icon{font-size:2.5rem;margin-bottom:8px;display:block}
+/* Refresh indicator */
+.refresh{font-size:0.6rem;color:var(--dim);margin-bottom:10px}
+.section-title{font-size:0.7rem;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.5px;margin-bottom:10px;margin-top:4px}
+</style>
+</head>
+<body>
+
+<!-- Fixed Header -->
+<div class="header">
+  <h1><span class="live-dot" id="dot"></span> TG Firebase Scanner</h1>
+  <div class="sub" id="hdr-sub">connecting...</div>
+</div>
+
+<!-- Page: Dashboard -->
+<div class="page active" id="page-dash">
+  <div class="refresh" id="refresh-ts"></div>
+  <div class="queue-bar" id="queue-bar"></div>
+  <div class="grid">
+    <div class="stat c-b"><div class="n" id="s-total">-</div><div class="l">Total Links</div></div>
+    <div class="stat c-g"><div class="n" id="s-live">-</div><div class="l">Live DBs</div></div>
+    <div class="stat c-y"><div class="n" id="s-dev">-</div><div class="l">Total Devices</div></div>
+    <div class="stat c-p"><div class="n" id="s-act">-</div><div class="l">Active Now</div></div>
+  </div>
+  <div class="filters">
+    <button class="filter-btn active" data-f="all" onclick="setFilter('all')">All</button>
+    <button class="filter-btn" data-f="live" onclick="setFilter('live')">🟢 Live</button>
+    <button class="filter-btn" data-f="dead" onclick="setFilter('dead')">🔴 Dead</button>
+    <button class="filter-btn" data-f="error" onclick="setFilter('error')">🟡 Error</button>
+  </div>
+  <div class="section-title" id="count-label"></div>
+  <div id="items"></div>
+</div>
+
+<!-- Page: Setup / Login -->
+<div class="page" id="page-setup">
+  <div class="card">
+    <h3>🔑 Telegram Login</h3>
+    <div id="setup-status" style="font-size:0.75rem;color:var(--muted);margin-bottom:10px">
+      Not connected — enter details to login
+    </div>
+    <label>Server URL (Railway)</label>
+    <div class="url-input-wrap">
+      <input type="text" id="server-url" placeholder="https://xxxx.railway.app">
+      <button onclick="saveUrl()">Save</button>
+    </div>
+    <div id="login-section">
+      <label>Phone Number</label>
+      <input type="tel" id="phone" value="+919861992132">
+      <button class="btn" id="btn-otp" onclick="sendOtp()">📨 Send OTP</button>
+      <div id="otp-section" style="display:none">
+        <label>OTP Code</label>
+        <input type="number" id="otp" placeholder="12345" inputmode="numeric" maxlength="6">
+        <label>2FA Password (blank if none)</label>
+        <input type="password" id="pwd" placeholder="Leave empty if no 2FA">
+        <button class="btn" id="btn-login" onclick="doLogin()">✅ Login</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>📋 Login Log</h3>
+    <div class="log" id="setup-log">Tap "Send OTP" to start...\n</div>
+  </div>
+</div>
+
+<!-- Page: Settings -->
+<div class="page" id="page-settings">
+  <div class="card">
+    <h3>⚙️ Settings</h3>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Auto-refresh</div>
+        <div class="setting-sub">Refresh every 10 seconds</div>
+      </div>
+      <button class="toggle on" id="toggle-refresh" onclick="toggleRefresh()"></button>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Show only Live DBs</div>
+        <div class="setting-sub">Hide dead and error links</div>
+      </div>
+      <button class="toggle" id="toggle-live-only" onclick="toggleLiveOnly()"></button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>ℹ️ About</h3>
+    <div style="font-size:0.75rem;color:var(--muted);line-height:1.8">
+      <div>24/7 Telegram scanner for Firebase links</div>
+      <div>Checks live/dead status + device counts</div>
+      <div style="margin-top:8px;color:var(--dim)">Connected to Railway backend</div>
+      <div id="server-display" style="font-size:0.65rem;color:var(--blue);word-break:break-all;margin-top:4px"></div>
+    </div>
+  </div>
+  <div class="card">
+    <button class="btn secondary" onclick="manualRefresh()">🔄 Refresh Now</button>
+    <button class="btn danger" style="margin-top:8px" onclick="clearData()">🗑️ Clear Saved Data</button>
+  </div>
+</div>
+
+<!-- Bottom Nav -->
+<nav class="nav">
+  <button class="nav-btn active" id="nav-dash" onclick="showPage('dash')">
+    <span class="icon">🔥</span>Dashboard
+  </button>
+  <button class="nav-btn" id="nav-setup" onclick="showPage('setup')">
+    <span class="icon">🔑</span>Login
+  </button>
+  <button class="nav-btn" id="nav-settings" onclick="showPage('settings')">
+    <span class="icon">⚙️</span>Settings
+  </button>
+</nav>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let serverUrl = localStorage.getItem('serverUrl') || '';
+let filter = 'all';
+let autoRefresh = true;
+let liveOnly = false;
+let refreshTimer = null;
+let allItems = [];
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.getElementById('server-url').value = serverUrl;
+document.getElementById('server-display').textContent = serverUrl || 'Not set';
+loadToggles();
+if (serverUrl) refresh();
+startRefreshTimer();
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+}
+
+// ── Filter ────────────────────────────────────────────────────────────────────
+function setFilter(f) {
+  filter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.f === f);
+  });
+  renderItems();
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderItems() {
+  let items = allItems;
+  if (liveOnly) items = items.filter(i => i.status === 'live');
+  if (filter !== 'all') items = items.filter(i => i.status === filter);
+
+  document.getElementById('count-label').textContent =
+    items.length + ' result' + (items.length !== 1 ? 's' : '') +
+    (filter !== 'all' ? ' (' + filter + ')' : '');
+
+  if (!items.length) {
+    document.getElementById('items').innerHTML =
+      '<div class="empty"><span class="icon">🔍</span>' +
+      (serverUrl ? 'No results yet — scanner is running' : 'Set server URL in Login tab') +
+      '</div>';
+    return;
+  }
+
+  document.getElementById('items').innerHTML = items.map(i => {
+    const name = i.url.replace('https://','').replace('-default-rtdb.firebaseio.com','');
+    const short = name.split('.')[0];
+    const dev = i.total > 0
+      ? `<div class="pills">
+          <span class="pill pp">📱 ${i.total}</span>
+          <span class="pill pg">🟢 ${i.active} active</span>
+          <span class="pill pi">⚫ ${i.total - i.active} idle</span>
+        </div>` : '';
+    const src = i.source
+      ? `<div class="detail" style="color:#2a2a2a">📌 ${i.source.slice(0,55)}</div>` : '';
+    return `<div class="item ${i.status}">
+      <div class="item-row">
+        <span class="item-url">${short}</span>
+        <span class="badge ${i.status}">${i.status}</span>
+      </div>
+      <div class="detail">${i.detail}</div>
+      ${dev}${src}
+    </div>`;
+  }).join('');
+}
+
+// ── Refresh data ──────────────────────────────────────────────────────────────
+async function refresh() {
+  if (!serverUrl) return;
+  try {
+    const r = await fetch(serverUrl + '/api/results');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+
+    allItems = d.items || [];
+    document.getElementById('s-total').textContent = d.total;
+    document.getElementById('s-live').textContent = d.live;
+    document.getElementById('s-dev').textContent = d.totalDevices;
+    document.getElementById('s-act').textContent = d.activeDevices;
+    document.getElementById('refresh-ts').textContent =
+      'Updated ' + new Date().toLocaleTimeString();
+
+    const dot = document.getElementById('dot');
+    const sub = document.getElementById('hdr-sub');
+    if (d.scanning) {
+      dot.className = 'live-dot on';
+      sub.textContent = 'Live scanning — ' + d.total + ' links found';
+    } else {
+      dot.className = 'live-dot';
+      sub.textContent = 'Connected — waiting for session';
+    }
+
+    const qb = document.getElementById('queue-bar');
+    if (d.queue > 0) {
+      qb.style.display = 'block';
+      qb.textContent = '⏳ Checking ' + d.queue + ' pending links...';
+    } else {
+      qb.style.display = 'none';
+    }
+
+    renderItems();
+  } catch(e) {
+    document.getElementById('dot').className = 'live-dot';
+    document.getElementById('hdr-sub').textContent = 'Cannot reach server';
+  }
+}
+
+function manualRefresh() { refresh(); }
+
+function startRefreshTimer() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  if (autoRefresh) refreshTimer = setInterval(refresh, 10000);
+}
+
+// ── Settings toggles ──────────────────────────────────────────────────────────
+function toggleRefresh() {
+  autoRefresh = !autoRefresh;
+  document.getElementById('toggle-refresh').className = 'toggle' + (autoRefresh ? ' on' : '');
+  localStorage.setItem('autoRefresh', autoRefresh);
+  startRefreshTimer();
+}
+
+function toggleLiveOnly() {
+  liveOnly = !liveOnly;
+  document.getElementById('toggle-live-only').className = 'toggle' + (liveOnly ? ' on' : '');
+  localStorage.setItem('liveOnly', liveOnly);
+  renderItems();
+}
+
+function loadToggles() {
+  autoRefresh = localStorage.getItem('autoRefresh') !== 'false';
+  liveOnly = localStorage.getItem('liveOnly') === 'true';
+  document.getElementById('toggle-refresh').className = 'toggle' + (autoRefresh ? ' on' : '');
+  document.getElementById('toggle-live-only').className = 'toggle' + (liveOnly ? ' on' : '');
+}
+
+function clearData() {
+  if (confirm('Clear saved server URL and settings?')) {
+    localStorage.clear();
+    serverUrl = '';
+    document.getElementById('server-url').value = '';
+    document.getElementById('server-display').textContent = 'Not set';
+    allItems = [];
+    renderItems();
+  }
+}
+
+// ── Setup / Login ─────────────────────────────────────────────────────────────
+function saveUrl() {
+  const v = document.getElementById('server-url').value.trim().replace(/\/$/, '');
+  if (!v) return;
+  serverUrl = v;
+  localStorage.setItem('serverUrl', v);
+  document.getElementById('server-display').textContent = v;
+  addSetupLog('Server URL saved: ' + v);
+  refresh();
+}
+
+function addSetupLog(msg, cls='') {
+  const el = document.getElementById('setup-log');
+  const ts = new Date().toLocaleTimeString('en', {hour12:false});
+  el.innerHTML += (cls ? '<span style="color:' + cls + '">' : '') +
+    '[' + ts + '] ' + msg + (cls ? '</span>' : '') + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendOtp() {
+  if (!serverUrl) { addSetupLog('⚠️ Save server URL first', '#f59e0b'); return; }
+  const phone = document.getElementById('phone').value.trim();
+  if (!phone) return;
+  document.getElementById('btn-otp').disabled = true;
+  addSetupLog('Sending OTP to ' + phone + '...');
+  try {
+    const r = await fetch(serverUrl + '/setup/sendCode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ phone })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      addSetupLog('✅ OTP sent! Check Telegram.', '#22c55e');
+      document.getElementById('otp-section').style.display = 'block';
+      document.getElementById('btn-otp').textContent = '🔄 Resend OTP';
+    } else {
+      addSetupLog('❌ ' + d.error, '#ef4444');
+      if (d.error && d.error.includes('wait')) addSetupLog('⏳ Flood limit — wait a few min', '#f59e0b');
+    }
+  } catch(e) {
+    addSetupLog('❌ Cannot reach server: ' + e.message, '#ef4444');
+    addSetupLog('Check server URL is correct', '#f59e0b');
+  }
+  document.getElementById('btn-otp').disabled = false;
+}
+
+async function doLogin() {
+  const code = document.getElementById('otp').value.trim();
+  const pwd = document.getElementById('pwd').value.trim();
+  if (!code) { addSetupLog('Enter OTP first', '#f59e0b'); return; }
+  document.getElementById('btn-login').disabled = true;
+  addSetupLog('Signing in...');
+  try {
+    const r = await fetch(serverUrl + '/setup/signIn', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ code, password: pwd || '' })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      addSetupLog('✅ Logged in! Scanner starting...', '#22c55e');
+      document.getElementById('setup-status').textContent = '✅ Connected & scanning';
+      document.getElementById('setup-status').style.color = '#22c55e';
+      setTimeout(() => { showPage('dash'); refresh(); }, 2000);
+    } else {
+      addSetupLog('❌ ' + d.error, '#ef4444');
+      if (d.error && d.error.includes('CODE')) addSetupLog('Wrong code — try again', '#f59e0b');
+    }
+  } catch(e) {
+    addSetupLog('❌ ' + e.message, '#ef4444');
+  }
+  document.getElementById('btn-login').disabled = false;
+}
+</script>
+</body>
+</html>
