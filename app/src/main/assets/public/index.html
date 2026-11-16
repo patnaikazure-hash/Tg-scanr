@@ -136,7 +136,7 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px
 
       <div id="otp-section" style="display:none">
         <label>OTP Code from Telegram</label>
-        <input class="input" id="inp-otp" type="number" placeholder="12345">
+        <input class="input" id="inp-otp" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="12345" autocomplete="one-time-code">
         <div id="pass-section" style="display:none">
           <label>2FA Password</label>
           <input class="input" id="inp-pass" type="password" placeholder="password">
@@ -276,15 +276,6 @@ function makeClient(sessionStr) {
   });
 }
 
-async function getClient() {
-  if (client && client.connected) return client;
-  if (!client) {
-    client = makeClient(localStorage.getItem('tg_session') || '');
-  }
-  await client.connect();
-  return client;
-}
-
 // ─── LOGIN ───────────────────────────────────────────────
 async function sendOTP() {
   if (typeof GramJS === 'undefined') {
@@ -327,7 +318,7 @@ async function sendOTP() {
 async function verifyOTP() {
   const phone = document.getElementById('inp-phone').value.trim();
   const code  = document.getElementById('inp-otp').value.trim();
-  const pass  = document.getElementById('inp-pass').value.trim();
+  const pass  = document.getElementById('inp-pass').value; // no trim — password spaces are intentional
 
   const btn = document.getElementById('verify-btn');
   btn.disabled    = true;
@@ -379,6 +370,16 @@ async function verifyOTP() {
     btn.disabled    = false;
     btn.textContent = 'Verify';
   }
+}
+
+// ─── HTML escape (prevent XSS in results) ────────────────
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ─── Firebase URL extraction ──────────────────────────────
@@ -451,11 +452,11 @@ function renderResults() {
       ? '<span>📦 Keys: ' + r.devices + '</span><span>📱 Device keys: ' + r.activeDevices + '</span>'
       : '';
     return '<div class="fb-item">'
-      + '<div class="fb-url">' + r.url + '</div>'
+      + '<div class="fb-url">' + escapeHtml(r.url) + '</div>'
       + '<div class="fb-meta">'
       + '<span class="badge ' + badgeClass + '">' + badgeText + '</span>'
       + metaExtra
-      + '<span style="color:#555">from: ' + (r.chatTitle||'?') + '</span>'
+      + '<span style="color:#555">from: ' + escapeHtml(r.chatTitle||'?') + '</span>'
       + '</div></div>';
   }).join('');
 }
