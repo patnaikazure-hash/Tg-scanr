@@ -43,8 +43,15 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, sans-s
 
 /* firebase link item */
 .fb-item { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
-.fb-url { font-size: 12px; color: var(--accent); word-break: break-all; margin-bottom: 6px; }
+.fb-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+.fb-url { font-size: 12px; color: var(--accent); word-break: break-all; flex: 1; }
+.copy-btn { font-size: 18px; cursor: pointer; user-select: none; line-height: 1; padding: 2px 4px; flex-shrink: 0; }
 .fb-meta { font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* filter chips */
+.filters { display: flex; gap: 8px; margin-bottom: 12px; }
+.chip { padding: 7px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--card); color: var(--muted); font-size: 13px; cursor: pointer; transition: .15s; }
+.chip.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
 
 /* button */
 .btn { width: 100%; padding: 13px; border-radius: 8px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: .2s; }
@@ -129,6 +136,14 @@ window.addEventListener('unhandledrejection', function(e) {
   <div class="log" id="scan-log"><p>Ready. Press Scan Now to start.</p></div>
 
   <div style="margin-top:16px">
+    <div class="filters">
+      <div class="chip active" id="flt-all"  onclick="setFilter('all')">All</div>
+      <div class="chip"        id="flt-live" onclick="setFilter('live')">✅ Live</div>
+      <div class="chip"        id="flt-dead" onclick="setFilter('dead')">❌ Dead</div>
+    </div>
+    <div id="copy-all-wrap" style="display:none; margin-bottom:12px">
+      <button class="btn btn-primary" id="copy-all-btn" onclick="copyAllLive()">📋 Copy all live URLs</button>
+    </div>
     <div class="section-title" id="results-title">Results</div>
     <div id="results-list"><div class="empty">No results yet</div></div>
   </div>
@@ -465,13 +480,15 @@ function escapeHtml(str) {
 }
 
 // ─── Firebase URL extraction ──────────────────────────────
+// Matches classic *.firebaseio.com AND newer *.firebasedatabase.app
+// (incl. regional *.<region>.firebasedatabase.app) so nothing is missed.
 function extractFirebaseUrls(text) {
   if (!text) return [];
-  const re = /https?:\/\/([a-zA-Z0-9-]+)\.firebaseio\.com\b[^\s"'\]>]*/g;
+  const re = /https?:\/\/[a-zA-Z0-9.\-]+\.(?:firebaseio\.com|firebasedatabase\.app)\b[^\s"'\]<>)]*/gi;
   var matches = [];
   var m;
   while ((m = re.exec(text)) !== null) {
-    matches.push(m[0].replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g,''));
+    matches.push(m[0].replace(/[^a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]/g, ''));
   }
   return matches;
 }
@@ -534,31 +551,89 @@ function checkFirebase(url) {
   });
 }
 
+// ─── Filter (All / Live / Dead) ───────────────────────────
+var currentFilter = 'all';
+function setFilter(f) {
+  currentFilter = f;
+  ['all','live','dead'].forEach(function(x) {
+    var b = document.getElementById('flt-' + x);
+    if (b) b.classList.toggle('active', x === f);
+  });
+  renderResults();
+}
+
+// ─── Copy helpers ─────────────────────────────────────────
+function fallbackCopy(text) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    var ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
+  } catch(e) { return false; }
+}
+function copyUrl(el) {
+  var url = el.getAttribute('data-url');
+  function flash(ok) { el.textContent = ok ? '✅' : '⚠️'; setTimeout(function(){ el.textContent = '📋'; }, 1000); }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(function(){ flash(true); }).catch(function(){ flash(fallbackCopy(url)); });
+  } else { flash(fallbackCopy(url)); }
+}
+function copyAllLive() {
+  var urls = results.filter(function(r){ return r.status==='live'; }).map(function(r){ return r.url; });
+  if (!urls.length) return;
+  var text = urls.join('\n');
+  var btn = document.getElementById('copy-all-btn');
+  function toast() { if (btn) { var o = btn.textContent; btn.textContent = '✅ Copied ' + urls.length; setTimeout(function(){ btn.textContent = o; }, 1300); } }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(toast).catch(function(){ if (fallbackCopy(text)) toast(); });
+  } else if (fallbackCopy(text)) { toast(); }
+}
+
 // ─── Render results ───────────────────────────────────────
 function renderResults() {
-  var el = document.getElementById('results-list');
-  document.getElementById('results-title').textContent = 'Results (' + results.length + ')';
-  document.getElementById('stat-total').textContent    = results.length;
-  document.getElementById('stat-live').textContent     = results.filter(function(r){ return r.status==='live'; }).length;
-  document.getElementById('stat-dead').textContent     = results.filter(function(r){ return r.status==='dead'; }).length;
+  var liveCount = results.filter(function(r){ return r.status==='live'; }).length;
+  var deadCount = results.filter(function(r){ return r.status==='dead'; }).length;
+  document.getElementById('stat-total').textContent = results.length;
+  document.getElementById('stat-live').textContent  = liveCount;
+  document.getElementById('stat-dead').textContent  = deadCount;
 
-  if (!results.length) {
-    el.innerHTML = '<div class="empty">No Firebase links found yet</div>';
+  var shown = results.filter(function(r) {
+    if (currentFilter === 'live') return r.status === 'live';
+    if (currentFilter === 'dead') return r.status === 'dead';
+    return true;
+  });
+  document.getElementById('results-title').textContent =
+    'Results (' + shown.length + (currentFilter !== 'all' ? ' ' + currentFilter : '') + ')';
+
+  var caw = document.getElementById('copy-all-wrap');
+  if (caw) caw.style.display = liveCount > 0 ? 'block' : 'none';
+  var cab = document.getElementById('copy-all-btn');
+  if (cab && cab.textContent.indexOf('Copied') === -1) cab.textContent = '📋 Copy all ' + liveCount + ' live URLs';
+
+  var el = document.getElementById('results-list');
+  if (!shown.length) {
+    el.innerHTML = '<div class="empty">No ' + (currentFilter === 'all' ? '' : currentFilter + ' ') + 'Firebase links</div>';
     return;
   }
 
-  el.innerHTML = results.map(function(r) {
+  el.innerHTML = shown.map(function(r) {
     var badgeClass = r.status==='checking' ? 'checking' : r.status==='live' ? 'live' : 'dead';
-    var badgeText  = r.status==='checking' ? '⏳ checking' : r.status==='live' ? '✅ LIVE' : '❌ DEAD';
-    var metaExtra  = r.status!=='checking'
-      ? '<span>📦 Keys: ' + r.devices + '</span><span>📱 Device keys: ' + r.activeDevices + '</span>'
-      : '';
+    var badgeText  = r.status==='checking' ? '⏳' : r.status==='live' ? '✅ LIVE' : '❌ DEAD';
+    var count = '';
+    if (r.status === 'live') {
+      count = (r.devices === '🔒')
+        ? '<span>🔒 locked</span>'
+        : '<span>📦 ' + r.devices + ' records</span>';
+    }
     return '<div class="fb-item">'
-      + '<div class="fb-url">' + escapeHtml(r.url) + '</div>'
+      + '<div class="fb-row">'
+      +   '<div class="fb-url">' + escapeHtml(r.url) + '</div>'
+      +   '<span class="copy-btn" data-url="' + escapeHtml(r.url) + '" onclick="copyUrl(this)">📋</span>'
+      + '</div>'
       + '<div class="fb-meta">'
-      + '<span class="badge ' + badgeClass + '">' + badgeText + '</span>'
-      + metaExtra
-      + '<span style="color:#555">from: ' + escapeHtml(r.chatTitle||'?') + '</span>'
+      +   '<span class="badge ' + badgeClass + '">' + badgeText + '</span>'
+      +   count
+      +   '<span style="color:#555">from: ' + escapeHtml(r.chatTitle||'?') + '</span>'
       + '</div></div>';
   }).join('');
 }
@@ -598,16 +673,16 @@ function titleOfMessage(msg, map) {
   return 'Chat';
 }
 
-// ─── FAST PATH: Telegram server-side global search ────────
-async function searchGlobalFirebase() {
+// ─── Server-side GLOBAL search for one keyword (all pages) ─
+async function searchGlobalQuery(query) {
   var G = window.GramJS.Api;
   var offsetRate = 0, offsetId = 0;
   var offsetPeer = new G.InputPeerEmpty();
-  var pages = 0, totalMsgs = 0;
+  var pages = 0;
 
-  while (pages < 25) {
+  while (pages < 80) {
     var res = await client.invoke(new G.messages.SearchGlobal({
-      q: 'firebaseio',
+      q: query,
       filter: new G.InputMessagesFilterEmpty(),
       minDate: 0, maxDate: 0,
       offsetRate: offsetRate,
@@ -618,22 +693,18 @@ async function searchGlobalFirebase() {
 
     var msgs = res.messages || [];
     if (!msgs.length) break;
-    totalMsgs += msgs.length;
 
     var map = buildTitleMap(res.chats, res.users);
     var added = 0;
     for (var m = 0; m < msgs.length; m++) {
-      var text = msgs[m].message || '';
-      var urls = extractFirebaseUrls(text);
+      var urls = extractFirebaseUrls(msgs[m].message || '');
       for (var u = 0; u < urls.length; u++) {
         if (addLink(urls[u], titleOfMessage(msgs[m], map))) added++;
       }
     }
     if (added) renderResults();
-    document.getElementById('stat-chats').textContent = totalMsgs;
-    setProgress(Math.min(70, 10 + pages * 8));
 
-    if (!res.nextRate) break;              // no more pages
+    if (!res.nextRate) break;
     offsetRate = res.nextRate;
     var last = msgs[msgs.length - 1];
     offsetId = last.id;
@@ -641,26 +712,36 @@ async function searchGlobalFirebase() {
     catch (e) { offsetPeer = new G.InputPeerEmpty(); }
     pages++;
   }
-  return results.length;
 }
 
-// ─── FALLBACK: per-chat scan, parallelized ────────────────
-async function deepScanParallel() {
+// ─── THOROUGH sweep: every chat, every firebase message ───
+// Server-side search for "firebase" inside each chat matches EVERY
+// message that contains a firebase link (both firebaseio.com and
+// firebasedatabase.app contain the word), so nothing is left out.
+async function deepSweepAllChats() {
   var checkAll = document.getElementById('chk-all-chats').checked;
-  var dialogs  = await client.getDialogs({ limit: 500 });
-  log('Deep scan: ' + dialogs.length + ' chats', 'info');
+
+  var dialogs = [];
+  try { dialogs = await client.getDialogs({ limit: 4000 }); }
+  catch (e) { try { dialogs = await client.getDialogs({ limit: 500 }); } catch(e2) { dialogs = []; } }
+  // also include the Archived folder
+  try {
+    var arch = await client.getDialogs({ limit: 4000, archived: true });
+    if (arch && arch.length) dialogs = dialogs.concat(arch);
+  } catch (e) {}
 
   var targets = dialogs.filter(function(d) {
-    if (!d.entity) return false;
+    if (!d || !d.entity) return false;
     if (!checkAll && d.entity.className === 'User') return false;
     return true;
   });
+  log('Sweeping ' + targets.length + ' chats (every message)…', 'info');
 
   var done = 0;
-  await runPool(targets, 8, async function(dialog) {
+  await runPool(targets, 6, async function(dialog) {
     var title = dialog.title || dialog.name || 'Chat';
     try {
-      var msgs = await client.getMessages(dialog.entity, { limit: 100, search: 'firebaseio' });
+      var msgs = await client.getMessages(dialog.entity, { search: 'firebase', limit: 1000 });
       var added = 0;
       for (var j = 0; j < msgs.length; j++) {
         var urls = extractFirebaseUrls(msgs[j].message || msgs[j].text || '');
@@ -670,7 +751,7 @@ async function deepScanParallel() {
     } catch (e) { /* inaccessible chat — skip */ }
     done++;
     document.getElementById('stat-chats').textContent = done;
-    setProgress(Math.min(70, Math.round(done / targets.length * 70)));
+    setProgress(10 + Math.round(done / targets.length * 60));
   });
 }
 
@@ -711,19 +792,20 @@ async function startScan() {
     await client.connect();
     log('Connected ✓', 'ok');
 
-    // Try the fast server-side search first
-    var found = 0;
+    // 1) Fast global search (both firebase domain keywords)
     try {
-      log('Searching all chats (fast)…', 'info');
-      found = await searchGlobalFirebase();
+      log('Global search…', 'info');
+      await searchGlobalQuery('firebaseio');
+      await searchGlobalQuery('firebasedatabase');
     } catch (e) {
-      log('Fast search unavailable — deep scanning…', 'info');
-      found = 0;
+      log('Global search skipped (' + (e.errorMessage || e.message) + ')', 'info');
     }
 
-    // Fall back to per-chat scan only if search found nothing
-    if (found === 0) {
-      await deepScanParallel();
+    // 2) Thorough sweep of EVERY chat — guarantees nothing is missed
+    try {
+      await deepSweepAllChats();
+    } catch (e) {
+      log('Sweep error: ' + (e.message || e), 'err');
     }
 
     log(results.length + ' new links found'
