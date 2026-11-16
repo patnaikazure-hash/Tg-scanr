@@ -193,6 +193,10 @@ window.addEventListener('load', function() {
       '<p class="err">❌ telegram.bundle.js failed to load. Reinstall APK.</p>';
   } else {
     console.log('GramJS bundle loaded OK. Keys:', Object.keys(GramJS).join(', '));
+    if (typeof GramJS.computeCheck !== 'function') {
+      document.getElementById('scan-log').innerHTML =
+        '<p class="err">❌ computeCheck missing from bundle. Rebuild needed.</p>';
+    }
   }
 });
 
@@ -339,12 +343,9 @@ async function verifyOTP() {
         return;
       }
       log('Checking 2FA password…', 'info', 'login-log');
-      await client.invoke(new GramJS.Api.auth.CheckPassword({
-        password: await client.computeCheck(
-          await client.invoke(new GramJS.Api.account.GetPassword()),
-          pass
-        )
-      }));
+      var pwdInfo = await client.invoke(new GramJS.Api.account.GetPassword());
+      var checked = await GramJS.computeCheck(pwdInfo, pass);
+      await client.invoke(new GramJS.Api.auth.CheckPassword({ password: checked }));
     } else {
       if (!code) return (btn.disabled = false, btn.textContent = 'Verify', alert('Enter OTP code'));
       log('Verifying code…', 'info', 'login-log');
