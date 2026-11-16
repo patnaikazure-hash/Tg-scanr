@@ -8,7 +8,7 @@ module.exports = {
     path: path.resolve(__dirname, 'dist'),
     library: {
       name: 'GramJS',
-      type: 'window',
+      type: 'var',
     },
   },
   resolve: {
@@ -29,16 +29,12 @@ module.exports = {
       http: false,
       https: false,
       zlib: false,
-      events: false,
+      events: require.resolve('events/'),
       url: false,
       querystring: false,
       vm: false,
       worker_threads: false,
       readline: false,
     },
-  },
-  externals: {
-    // node-localstorage uses node fs — we don't need it in browser
-    'node-localstorage': 'null',
   },
 };

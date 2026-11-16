@@ -181,6 +181,14 @@ label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px
 
 <script src="telegram.bundle.js"></script>
 <script>
+// ─── Bundle check ────────────────────────────────────────
+window.addEventListener('load', function() {
+  if (typeof GramJS === 'undefined') {
+    document.getElementById('scan-log').innerHTML =
+      '<p class="err">❌ telegram.bundle.js failed to load. Check if APK was built correctly.</p>';
+  }
+});
+
 // ─── State ───────────────────────────────────────────────
 const API_ID   = () => parseInt(document.getElementById('set-api-id').value)   || 18550618;
 const API_HASH = () => document.getElementById('set-api-hash').value            || 'e98b922550a95f725dfc30e13571589f';
