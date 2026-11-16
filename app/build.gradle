@@ -5,6 +5,8 @@ plugins {
 android {
     compileSdk 34
 
+    namespace "com.tgscanner"
+
     defaultConfig {
         applicationId "com.tgscanner"
         minSdk 21

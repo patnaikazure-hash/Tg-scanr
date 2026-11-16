@@ -38,7 +38,7 @@ jobs:
     - name: Build Release APK
       run: gradle assembleRelease --no-daemon
       env:
-        ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+        ANDROID_HOME: /usr/local/lib/android/sdk
 
     - name: Find and copy APK
       run: |
