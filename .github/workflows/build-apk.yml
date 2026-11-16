@@ -21,6 +21,20 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Build GramJS browser bundle
+      run: |
+        cd gramjs-bundle
+        npm install
+        npm run build
+        ls -lah dist/
+        cp dist/telegram.bundle.js ../app/src/main/assets/public/telegram.bundle.js
+        echo "Bundle copied to assets"
+
     - name: Accept Android SDK licenses and install components
       run: |
         yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
@@ -59,20 +73,25 @@ jobs:
       if: github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v1.${{ github.run_number }}
-        name: "TG Firebase Scanner v1.${{ github.run_number }}"
+        tag_name: v2.${{ github.run_number }}
+        name: "TG Firebase Scanner v2.${{ github.run_number }}"
         body: |
-          ## TG Firebase Scanner APK
+          ## TG Firebase Scanner APK — Fully On-Device
 
-          **Install:** Download `TgFirebaseScanner.apk` and install on Android.
+          No server needed. Everything runs on your phone.
 
-          > Enable "Install from unknown sources" in Android settings first.
+          **Install:**
+          1. Download `TgFirebaseScanner.apk`
+          2. Enable "Install from unknown sources" in Android settings
+          3. Install and open the app
+          4. Go to **Login** tab → enter phone → get OTP → verify
+          5. Go to **Dashboard** → tap **Scan Now**
 
           **Features:**
-          - Connects to your Railway backend
-          - Shows Firebase links found in Telegram
-          - Live/dead status + device counts
-          - Auto-refreshes every 10 seconds
+          - Connects to Telegram directly from your phone
+          - Scans all chats for Firebase links
+          - Checks each Firebase link (live/dead, key counts)
+          - Session saved on device — login once, scan forever
         files: output/TgFirebaseScanner.apk
         draft: false
         prerelease: false
