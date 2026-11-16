@@ -181,7 +181,7 @@ window.addEventListener('unhandledrejection', function(e) {
     <button class="btn btn-primary" onclick="saveSettings()">Save</button>
   </div>
 
-  <div class="card">
+  <div class="card" style="margin-bottom:12px">
     <div class="card-title">Scan Options</div>
     <label style="margin-top:8px; display:flex; align-items:center; gap:8px; cursor:pointer">
       <input type="checkbox" id="chk-check-firebase" checked style="width:16px;height:16px">
@@ -191,6 +191,17 @@ window.addEventListener('unhandledrejection', function(e) {
       <input type="checkbox" id="chk-all-chats" checked style="width:16px;height:16px">
       Scan all chats (uncheck = only groups/channels)
     </label>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Saved / Seen Firebases</div>
+    <p style="font-size:12px; color:var(--muted); margin:6px 0 10px">
+      Every checked link is remembered and skipped on future scans, so you only
+      see new ones. Delete an entry (or clear all) to detect it again.
+    </p>
+    <div id="saved-count" style="font-size:13px; color:var(--accent); margin-bottom:8px">0 saved</div>
+    <div class="log" id="saved-list" style="max-height:240px"><p>None saved yet.</p></div>
+    <button class="btn btn-danger" onclick="clearAllSaved()">🗑 Clear All Saved</button>
   </div>
 </div>
 
@@ -229,6 +240,54 @@ let phoneCodeHash = null;
 let results      = [];
 let scanning     = false;
 let awaitingPass = false; // true when 2FA password is needed
+let savedMap     = {};    // persisted set of already-checked firebases
+let skippedSaved = 0;     // how many were skipped this scan because already saved
+
+// ─── Saved-firebase store (persists in localStorage) ──────
+function normKey(url) { return url.split('?')[0].replace(/\/+$/, '').toLowerCase(); }
+function loadSaved() {
+  try { return JSON.parse(localStorage.getItem('fb_saved') || '{}'); } catch(e) { return {}; }
+}
+function saveSavedMap(map) {
+  try { localStorage.setItem('fb_saved', JSON.stringify(map)); } catch(e) {}
+}
+function markSaved(url, info, map) {
+  map[normKey(url)] = {
+    url: url.split('?')[0],
+    status: info.status,
+    devices: info.devices,
+    activeDevices: info.activeDevices,
+    ts: Date.now()
+  };
+}
+
+var _savedKeys = [];
+function renderSavedList() {
+  var map   = loadSaved();
+  _savedKeys = Object.keys(map);
+  var cntEl = document.getElementById('saved-count');
+  var listEl = document.getElementById('saved-list');
+  if (!cntEl || !listEl) return;
+  cntEl.textContent = _savedKeys.length + ' saved';
+  if (!_savedKeys.length) { listEl.innerHTML = '<p>None saved yet.</p>'; return; }
+  listEl.innerHTML = _savedKeys.map(function(k, i) {
+    var v = map[k] || {};
+    var badge = v.status === 'live' ? '✅' : '❌';
+    return '<p>' + badge + ' ' + escapeHtml(v.url || k)
+         + ' <span style="color:var(--red);cursor:pointer" onclick="deleteSaved(' + i + ')">[delete]</span></p>';
+  }).join('');
+}
+function deleteSaved(i) {
+  var map = loadSaved();
+  var k = _savedKeys[i];
+  if (k) { delete map[k]; saveSavedMap(map); }
+  renderSavedList();
+}
+function clearAllSaved() {
+  if (!confirm('Clear ALL saved Firebases? They will be detected again on the next scan.')) return;
+  localStorage.removeItem('fb_saved');
+  renderSavedList();
+}
 
 // ─── Utils ───────────────────────────────────────────────
 function showTab(tab) {
@@ -239,7 +298,8 @@ function showTab(tab) {
   document.querySelectorAll('.page').forEach(p => {
     p.classList.toggle('active', p.id === 'page-' + tab);
   });
-  if (tab === 'login') checkSavedSession();
+  if (tab === 'login')    checkSavedSession();
+  if (tab === 'settings') renderSavedList();
 }
 
 function log(msg, type, target) {
@@ -506,9 +566,10 @@ function renderResults() {
 // ─── Helpers for scan ─────────────────────────────────────
 var seen = {};
 function addLink(url, title) {
-  var key = url.split('?')[0].toLowerCase();
-  if (seen[key]) return false;
+  var key = normKey(url);
+  if (seen[key]) return false;                 // duplicate within this scan
   seen[key] = true;
+  if (savedMap[key]) { skippedSaved++; return false; } // already checked in a past scan — skip
   results.push({ url: url, chatTitle: title || '?', status: 'checking', devices: 0, activeDevices: 0 });
   return true;
 }
@@ -628,9 +689,11 @@ async function startScan() {
     return;
   }
 
-  scanning = true;
-  results  = [];
-  seen     = {};
+  scanning     = true;
+  results      = [];
+  seen         = {};
+  skippedSaved = 0;
+  savedMap     = loadSaved();   // links checked in past scans — skip these
   var btn  = document.getElementById('scan-btn');
   btn.disabled    = true;
   btn.textContent = '⏳ Scanning…';
@@ -663,7 +726,8 @@ async function startScan() {
       await deepScanParallel();
     }
 
-    log(results.length + ' unique Firebase links found', 'ok');
+    log(results.length + ' new links found'
+        + (skippedSaved ? ' (' + skippedSaved + ' already saved, skipped)' : ''), 'ok');
     setProgress(72);
 
     // ── Liveness checks IN PARALLEL ──
@@ -673,13 +737,20 @@ async function startScan() {
       await runPool(results, 12, async function(r) {
         var info = await checkFirebase(r.url);
         r.status = info.status; r.devices = info.devices; r.activeDevices = info.activeDevices;
+        markSaved(r.url, info, savedMap);   // remember it — skipped on future scans
         checked++;
         renderResults();
         setProgress(72 + Math.round(checked / results.length * 28));
       });
     } else {
-      for (var i = 0; i < results.length; i++) results[i].status = 'live';
+      for (var i = 0; i < results.length; i++) {
+        results[i].status = 'live';
+        markSaved(results[i].url, results[i], savedMap);
+      }
     }
+
+    // Persist the updated saved-set so these are skipped next time
+    saveSavedMap(savedMap);
 
     var live = results.filter(function(r){ return r.status==='live'; }).length;
     var dead = results.filter(function(r){ return r.status==='dead'; }).length;
